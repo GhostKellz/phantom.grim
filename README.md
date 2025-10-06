@@ -1,7 +1,7 @@
 # Phantom.grim
 
 <div align="center">
-  <img src="assets/grim-phantom.png" alt="Phantom.grim logo" width="200" height="200">
+  <img src="assets/icons/grim-phantom.png" alt="Phantom.grim logo" width="200" height="200">
 
 **The Ultimate Grim Configuration Framework**
 *LazyVim-inspired distro built from the ground up in Zig and Ghostlang for Grim editor*
