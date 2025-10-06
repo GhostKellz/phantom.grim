@@ -1,0 +1,33 @@
+-- plugins/core/statusline.gza
+-- Statusline plugin placeholder for Phantom.grim
+
+local plugin = {
+    name = "statusline",
+    state = {
+        initialized = false,
+    },
+}
+
+local function log(message)
+    print("[statusline] " .. message)
+end
+
+function plugin.setup(opts)
+    if plugin.state.initialized then
+        return plugin
+    end
+
+    plugin.state.initialized = true
+    plugin.state.options = opts or {}
+
+    -- TODO: Implement statusline rendering and integration with Grim APIs.
+    log("initialized")
+
+    return plugin
+end
+
+function plugin.refresh()
+    log("refresh placeholder")
+end
+
+return plugin.setup()

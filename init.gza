@@ -2,23 +2,23 @@
 -- Main entry point for Phantom.grim configuration framework
 -- Bootstraps the entire system
 
-print("Phantom.grim initializing...")
+print("[phantom.grim] bootstrapping runtime...")
 
--- Load core modules
 local core = require("core")
+core.init({ verbose = true })
 
--- Initialize the plugin system
-core.init()
-
--- Load default configuration
+-- Defaults are already loaded by the Zig runtime, but requiring them here keeps
+-- Ghostlang modules warm when users reload configuration at runtime.
 require("runtime.defaults.options")
 require("runtime.defaults.keymaps")
 require("runtime.defaults.autocmds")
 
--- Load core plugins
-core.load_plugin("file-tree")
-core.load_plugin("fuzzy-finder")
-core.load_plugin("statusline")
-core.load_plugin("treesitter")
+core.ensure_plugins({
+	"core.file-tree",
+	"core.fuzzy-finder",
+	"core.statusline",
+	"core.treesitter",
+})
 
-print("Phantom.grim ready!")
+local loaded = table.concat(core.loaded_plugins(), ", ")
+print("[phantom.grim] ready (core plugins: " .. loaded .. ")")

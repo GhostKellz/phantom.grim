@@ -47,13 +47,27 @@ pub const ConfigManager = struct {
         // 1. Defaults
         try self.loadDefaults();
 
-        // 2. User configuration
+        // 2. Bootstrap init script (may load plugins)
+        try self.loadInitScript();
+
+        // 3. User configuration
         try self.loadUserConfig();
 
-        // 3. Plugin configurations
+        // 4. Plugin configurations
         try self.loadPluginConfigs();
 
         zlog.info("Configuration loaded successfully", .{});
+    }
+
+    fn loadInitScript(self: *ConfigManager) !void {
+        const init_path = try std.fs.path.join(self.allocator, &[_][]const u8{ self.config_dir, "init.gza" });
+        defer self.allocator.free(init_path);
+
+        if (std.fs.cwd().access(init_path, .{})) {
+            try self.ghostlang_runtime.loadConfigFile(init_path);
+        } else |_| {
+            zlog.info("No init.gza found at: {s}", .{init_path});
+        }
     }
 
     /// Load default configuration files
@@ -93,8 +107,54 @@ pub const ConfigManager = struct {
         const plugins_dir = try std.fs.path.join(self.allocator, &[_][]const u8{ self.config_dir, "plugins" });
         defer self.allocator.free(plugins_dir);
 
-        // TODO: Scan plugins directory and load plugin configs
-        zlog.info("Plugin config loading placeholder", .{});
+        var dir = std.fs.cwd().openDir(plugins_dir, .{ .iterate = true }) catch |err| {
+            if (err == error.FileNotFound) {
+                zlog.info("Plugins directory not found: {s}", .{plugins_dir});
+                return;
+            }
+            return err;
+        };
+        defer dir.close();
+
+        var walker = try dir.walk(self.allocator);
+        defer walker.deinit();
+
+        while (try walker.next()) |entry| {
+            if (entry.kind != .file) continue;
+            if (!std.mem.endsWith(u8, entry.path, ".gza")) continue;
+
+            const module_name = pluginPathToModuleName(self.allocator, entry.path) catch |err| {
+                zlog.warn("Skipping plugin file {s}: {any}", .{ entry.path, err });
+                continue;
+            };
+            defer self.allocator.free(module_name);
+
+            const snippet = try std.fmt.allocPrint(self.allocator, "require(\"{s}\")", .{module_name});
+            defer self.allocator.free(snippet);
+
+            _ = try self.ghostlang_runtime.executeCode(snippet);
+        }
+    }
+
+    fn pluginPathToModuleName(allocator: std.mem.Allocator, relative_path: []const u8) ![]u8 {
+        if (!std.mem.endsWith(u8, relative_path, ".gza")) {
+            return error.InvalidPluginPath;
+        }
+
+        const stem_len = relative_path.len - ".gza".len;
+        const prefix = "plugins.";
+        const total_len = prefix.len + stem_len;
+        var buffer = try allocator.alloc(u8, total_len);
+
+        std.mem.copyForwards(u8, buffer[0..prefix.len], prefix);
+
+        var i: usize = 0;
+        while (i < stem_len) : (i += 1) {
+            const ch = relative_path[i];
+            buffer[prefix.len + i] = if (ch == '/' or ch == '\\') '.' else ch;
+        }
+
+        return buffer;
     }
 
     /// Get a configuration value
@@ -127,3 +187,15 @@ pub const ConfigManager = struct {
         _ = try self.ghostlang_runtime.executeCode(code);
     }
 };
+
+test "pluginPathToModuleName converts plugin paths" {
+    const allocator = std.testing.allocator;
+
+    const module1 = try ConfigManager.pluginPathToModuleName(allocator, "core/file-tree.gza");
+    defer allocator.free(module1);
+    try std.testing.expectEqualStrings("plugins.core.file-tree", module1);
+
+    const module2 = try ConfigManager.pluginPathToModuleName(allocator, "statusline.gza");
+    defer allocator.free(module2);
+    try std.testing.expectEqualStrings("plugins.statusline", module2);
+}

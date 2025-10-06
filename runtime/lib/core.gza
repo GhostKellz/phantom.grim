@@ -1,0 +1,124 @@
+-- runtime/lib/core.gza
+-- Core Ghostlang helpers for Phantom.grim configuration loading
+
+local core = {}
+local state = {
+    initialized = false,
+    loaded = {},
+    history = {},
+}
+
+local function normalize_name(name)
+    return (name or ""):gsub("/", ".")
+end
+
+local function candidate_modules(name)
+    local normalized = normalize_name(name)
+    local modules = {}
+
+    if normalized:match("^plugins%.") then
+        table.insert(modules, normalized)
+    else
+        local first_segment = normalized:match("^(.-)%.")
+
+        if first_segment then
+            table.insert(modules, "plugins." .. normalized)
+            table.insert(modules, normalized)
+        else
+            table.insert(modules, "plugins.core." .. normalized)
+            table.insert(modules, "plugins." .. normalized)
+            table.insert(modules, normalized)
+        end
+    end
+
+    return modules
+end
+
+local function record_attempt(module_name, ok, err)
+    table.insert(state.history, {
+        module = module_name,
+        ok = ok,
+        err = err,
+    })
+end
+
+local function try_require(module_name)
+    local ok, result = pcall(require, module_name)
+    record_attempt(module_name, ok, ok and nil or result)
+    return ok, result
+end
+
+function core.init(opts)
+    if state.initialized then
+        return state
+    end
+
+    opts = opts or {}
+    state.initialized = true
+    state.opts = opts
+
+    if opts.verbose then
+        print("[core] Phantom.grim core runtime ready")
+    end
+
+    return state
+end
+
+function core.load_plugin(name)
+    core.init(state.opts)
+
+    if state.loaded[name] then
+        return state.loaded[name]
+    end
+
+    local last_error = nil
+    for _, module_name in ipairs(candidate_modules(name)) do
+        local ok, result = try_require(module_name)
+        if ok then
+            state.loaded[name] = result or true
+            return state.loaded[name]
+        else
+            last_error = result
+        end
+    end
+
+    if last_error then
+        print("[core] Failed to load plugin " .. name .. ": " .. tostring(last_error))
+    else
+        print("[core] Failed to load plugin " .. name .. ": no candidates resolved")
+    end
+
+    return nil
+end
+
+function core.ensure_plugins(list)
+    for _, name in ipairs(list or {}) do
+        core.load_plugin(name)
+    end
+end
+
+function core.is_loaded(name)
+    return state.loaded[name] ~= nil
+end
+
+function core.loaded_plugins()
+    local plugins = {}
+    for name, _ in pairs(state.loaded) do
+        table.insert(plugins, name)
+    end
+    table.sort(plugins)
+    return plugins
+end
+
+function core.history()
+    return state.history
+end
+
+function core.reset()
+    state.initialized = false
+    state.loaded = {}
+    state.history = {}
+    state.opts = nil
+end
+
+return core

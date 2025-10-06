@@ -62,14 +62,14 @@ pub const GhostlangRuntime = struct {
         defer self.allocator.free(source);
 
         // Load and execute the script
-    var script = try self.engine.loadScript(source);
-    defer script.deinit();
+        var script = try self.engine.loadScript(source);
+        defer script.deinit();
 
-            const previous = active_runtime;
-            active_runtime = self;
-            defer active_runtime = previous;
+        const previous = active_runtime;
+        active_runtime = self;
+        defer active_runtime = previous;
 
-    const result = try script.run();
+        const result = try script.run();
         _ = result; // TODO: Handle return values
 
         zlog.info("Config file loaded successfully: {s}", .{file_path});
@@ -80,18 +80,18 @@ pub const GhostlangRuntime = struct {
         var script = try self.engine.loadScript(code);
         defer script.deinit();
 
-            const previous = active_runtime;
-            active_runtime = self;
-            defer active_runtime = previous;
+        const previous = active_runtime;
+        active_runtime = self;
+        defer active_runtime = previous;
 
         return try script.run();
     }
 
     /// Call a function defined in loaded scripts
     pub fn callFunction(self: *GhostlangRuntime, name: []const u8, args: anytype) !ghostlang.ScriptValue {
-           const previous = active_runtime;
-           active_runtime = self;
-           defer active_runtime = previous;
+        const previous = active_runtime;
+        active_runtime = self;
+        defer active_runtime = previous;
 
         return try self.engine.call(name, args);
     }
@@ -167,6 +167,38 @@ fn moduleNameToRelativePath(allocator: std.mem.Allocator, module_name: []const u
     }
     std.mem.copyForwards(u8, buffer[module_name.len .. module_name.len + suffix.len], suffix);
     return buffer;
+}
+
+fn resolveModulePath(runtime: *GhostlangRuntime, relative: []const u8) ![]u8 {
+    const direct = try std.fs.path.join(runtime.allocator, &[_][]const u8{ runtime.config_dir, relative });
+    if (std.fs.cwd().access(direct, .{})) {
+        return direct;
+    } else |err| {
+        runtime.allocator.free(direct);
+        if (err != error.FileNotFound) {
+            return err;
+        }
+    }
+
+    const fallback_dirs = [_][]const u8{
+        "runtime/lib",
+        "runtime/defaults",
+        "lua/user",
+    };
+
+    for (fallback_dirs) |dir| {
+        const path = try std.fs.path.join(runtime.allocator, &[_][]const u8{ runtime.config_dir, dir, relative });
+        if (std.fs.cwd().access(path, .{})) {
+            return path;
+        } else |err| {
+            runtime.allocator.free(path);
+            if (err != error.FileNotFound) {
+                return err;
+            }
+        }
+    }
+
+    return error.ModuleNotFound;
 }
 
 // Built-in functions available to Ghostlang scripts
@@ -302,16 +334,18 @@ fn requireFunc(args: []const ghostlang.ScriptValue) ghostlang.ScriptValue {
     };
     defer runtime.allocator.free(relative);
 
-    const full_path = std.fs.path.join(runtime.allocator, &[_][]const u8{ runtime.config_dir, relative }) catch {
-        zlog.err("require(): failed to join path for module {s}", .{module_name});
+    const full_path = resolveModulePath(runtime, relative) catch |err| {
+        switch (err) {
+            error.ModuleNotFound => {
+                zlog.err("require(): module {s} not found", .{module_name});
+            },
+            else => {
+                zlog.err("require(): failed to resolve module {s}: {any}", .{ module_name, err });
+            },
+        }
         return ghostlang.ScriptValue{ .nil = {} };
     };
     defer runtime.allocator.free(full_path);
-
-    if (std.fs.cwd().access(full_path, .{})) |_| {} else |err| {
-        zlog.err("require(): module {s} not found ({any})", .{ module_name, err });
-        return ghostlang.ScriptValue{ .nil = {} };
-    }
 
     runtime.loadConfigFile(full_path) catch |err| {
         zlog.err("require(): failed to load module {s}: {any}", .{ module_name, err });

@@ -1,34 +1,41 @@
 -- plugins/core/fuzzy-finder.gza
 -- Fuzzy finder plugin for Phantom.grim
 
-local fuzzy_finder = {}
+local plugin = {
+    name = "fuzzy-finder",
+    state = {
+        initialized = false,
+    },
+}
 
-function fuzzy_finder.setup()
-    print("Setting up fuzzy finder...")
-
-    -- TODO: Initialize fuzzy finder
-    -- TODO: Set up telescope-like interface
-    -- TODO: Bind commands
-
-    print("Fuzzy finder ready")
+local function log(message)
+    print("[fuzzy-finder] " .. message)
 end
 
-function fuzzy_finder.find_files()
-    print("Finding files...")
-    -- TODO: Show file picker
+function plugin.setup(opts)
+    if plugin.state.initialized then
+        return plugin
+    end
+
+    plugin.state.initialized = true
+    plugin.state.options = opts or {}
+
+    -- TODO: Wire up picker providers, history sources, and command plumbing.
+    log("initialized")
+
+    return plugin
 end
 
-function fuzzy_finder.grep()
-    print("Grep search...")
-    -- TODO: Show grep picker
+function plugin.find_files()
+    log("find_files placeholder")
 end
 
-function fuzzy_finder.buffers()
-    print("Buffer picker...")
-    -- TODO: Show buffer picker
+function plugin.grep()
+    log("grep placeholder")
 end
 
--- Initialize on load
-fuzzy_finder.setup()
+function plugin.buffers()
+    log("buffers placeholder")
+end
 
-return fuzzy_finder
+return plugin.setup()

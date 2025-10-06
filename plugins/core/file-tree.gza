@@ -1,32 +1,38 @@
 -- plugins/core/file-tree.gza
 -- File tree plugin for Phantom.grim
 
-local file_tree = {}
+local plugin = {
+    name = "file-tree",
+    state = {
+        initialized = false,
+        options = {},
+    },
+}
 
-function file_tree.setup()
-    -- Setup file tree sidebar
-    print("Setting up file tree...")
-
-    -- TODO: Initialize file tree UI
-    -- TODO: Bind to keymaps
-    -- TODO: Handle file operations
-
-    print("File tree ready")
+local function log(message)
+    print("[file-tree] " .. message)
 end
 
-function file_tree.toggle()
-    -- Toggle file tree visibility
-    print("Toggling file tree")
-    -- TODO: Implement toggle logic
+function plugin.setup(opts)
+    if plugin.state.initialized then
+        return plugin
+    end
+
+    plugin.state.initialized = true
+    plugin.state.options = opts or {}
+
+    -- TODO: Initialize file tree UI, keymaps, and events.
+    log("initialized")
+
+    return plugin
 end
 
-function file_tree.open_file(path)
-    -- Open file in editor
-    print("Opening file: " .. path)
-    -- TODO: Open file logic
+function plugin.toggle()
+    log("toggle placeholder")
 end
 
--- Initialize on load
-file_tree.setup()
+function plugin.open(path)
+    log("open placeholder for " .. tostring(path))
+end
 
-return file_tree
+return plugin.setup()

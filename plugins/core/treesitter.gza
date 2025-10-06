@@ -1,0 +1,34 @@
+-- plugins/core/treesitter.gza
+-- Treesitter integration stub for Phantom.grim
+
+local plugin = {
+    name = "treesitter",
+    state = {
+        initialized = false,
+        parsers = {},
+    },
+}
+
+local function log(message)
+    print("[treesitter] " .. message)
+end
+
+function plugin.setup(opts)
+    if plugin.state.initialized then
+        return plugin
+    end
+
+    plugin.state.initialized = true
+    plugin.state.options = opts or {}
+
+    -- TODO: Wire Grove-backed syntax trees and highlight injection.
+    log("initialized")
+
+    return plugin
+end
+
+function plugin.ensure_parser(language)
+    log("ensure_parser placeholder for " .. tostring(language))
+end
+
+return plugin.setup()
