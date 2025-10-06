@@ -39,6 +39,12 @@ pub fn build(b: *std.Build) void {
         // Later on we'll use this module as the root module of a test executable
         // which requires us to specify a target.
         .target = target,
+        .imports = &.{
+            .{ .name = "zsync", .module = b.dependency("zsync", .{}).module("zsync") },
+            .{ .name = "ghostlang", .module = b.dependency("ghostlang", .{}).module("ghostlang") },
+            .{ .name = "grove", .module = b.dependency("grove", .{}).module("grove") },
+            .{ .name = "zlog", .module = b.dependency("zlog", .{}).module("zlog") },
+        },
     });
 
     // Here we define an executable. An executable needs to have a root module
@@ -79,6 +85,12 @@ pub fn build(b: *std.Build) void {
                 // can be extremely useful in case of collisions (which can happen
                 // importing modules from different packages).
                 .{ .name = "phantom_grim", .module = mod },
+                .{ .name = "zsync", .module = b.dependency("zsync", .{}).module("zsync") },
+                .{ .name = "ghostlang", .module = b.dependency("ghostlang", .{}).module("ghostlang") },
+                .{ .name = "grove", .module = b.dependency("grove", .{}).module("grove") },
+                .{ .name = "zlog", .module = b.dependency("zlog", .{}).module("zlog") },
+                .{ .name = "zhttp", .module = b.dependency("zhttp", .{}).module("zhttp") },
+                .{ .name = "flare", .module = b.dependency("flare", .{}).module("flare") },
             },
         }),
     });

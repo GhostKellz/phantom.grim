@@ -1,0 +1,24 @@
+-- phantom.grim/init.gza
+-- Main entry point for Phantom.grim configuration framework
+-- Bootstraps the entire system
+
+print("Phantom.grim initializing...")
+
+-- Load core modules
+local core = require("core")
+
+-- Initialize the plugin system
+core.init()
+
+-- Load default configuration
+require("runtime.defaults.options")
+require("runtime.defaults.keymaps")
+require("runtime.defaults.autocmds")
+
+-- Load core plugins
+core.load_plugin("file-tree")
+core.load_plugin("fuzzy-finder")
+core.load_plugin("statusline")
+core.load_plugin("treesitter")
+
+print("Phantom.grim ready!")

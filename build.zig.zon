@@ -32,44 +32,31 @@
     // Once all dependencies are fetched, `zig build` no longer requires
     // internet connectivity.
     .dependencies = .{
-        // See `zig fetch --save <url>` for a command-line interface for adding dependencies.
-        //.example = .{
-        //    // When updating this field to a new URL, be sure to delete the corresponding
-        //    // `hash`, otherwise you are communicating that you expect to find the old hash at
-        //    // the new URL. If the contents of a URL change this will result in a hash mismatch
-        //    // which will prevent zig from using it.
-        //    .url = "https://example.com/foo.tar.gz",
-        //
-        //    // This is computed from the file contents of the directory of files that is
-        //    // obtained after fetching `url` and applying the inclusion rules given by
-        //    // `paths`.
-        //    //
-        //    // This field is the source of truth; packages do not come from a `url`; they
-        //    // come from a `hash`. `url` is just one of many possible mirrors for how to
-        //    // obtain a package matching this `hash`.
-        //    //
-        //    // Uses the [multihash](https://multiformats.io/multihash/) format.
-        //    .hash = "...",
-        //
-        //    // When this is provided, the package is found in a directory relative to the
-        //    // build root. In this case the package's hash is irrelevant and therefore not
-        //    // computed. This field and `url` are mutually exclusive.
-        //    .path = "foo",
-        //
-        //    // When this is set to `true`, a package is declared to be lazily
-        //    // fetched. This makes the dependency only get fetched if it is
-        //    // actually used.
-        //    .lazy = false,
-        //},
+        .zsync = .{
+            .url = "https://github.com/ghostkellz/zsync/archive/main.tar.gz",
+            .hash = "zsync-0.5.4-KAuheZ4THQAlN32uBKm76ezT7dPT6rvj4ll56NiA9z9M",
+        },
+        .ghostlang = .{
+            .url = "https://github.com/ghostkellz/ghostlang/archive/main.tar.gz",
+            .hash = "ghostlang-0.1.0-_SzSPTmiBQDNBVoKrlD3968nr64-NeIhF0MdXxAWMHNr",
+        },
+        .grove = .{
+            .url = "https://github.com/ghostkellz/grove/archive/main.tar.gz",
+            .hash = "grove-0.1.1-rGFsN_LL5QTSh6NUKSduuTenktQupUhyGhf6TDJDQhs3",
+        },
+        .zlog = .{
+            .url = "https://github.com/ghostkellz/zlog/archive/main.tar.gz",
+            .hash = "zlog-0.1.0-kS0sWE9cCAC4TsztkA-l0QEYu3eUKXrHnHux5eDvs04J",
+        },
+        .zhttp = .{
+            .url = "https://github.com/ghostkellz/zhttp/archive/main.tar.gz",
+            .hash = "zhttp-0.1.2-jZpECD6WBQBDZbLNrphEx_zqWSrsT4jyO_Hs9iMDkSQX",
+        },
+        .flare = .{
+            .url = "https://github.com/ghostkellz/flare/archive/main.tar.gz",
+            .hash = "flare-0.1.0-NK4JafGMAQA8xE2ah8YBxO74sOkWrsQYTkWQ64D1PJVg",
+        },
     },
-    // Specifies the set of files and directories that are included in this package.
-    // Only files and directories listed here are included in the `hash` that
-    // is computed for this package. Only files listed here will remain on disk
-    // when using the zig package manager. As a rule of thumb, one should list
-    // files required for compilation plus any license(s).
-    // Paths are relative to the build root. Use the empty string (`""`) to refer to
-    // the build root itself.
-    // A directory listed here means that all files within, recursively, are included.
     .paths = .{
         "build.zig",
         "build.zig.zon",
