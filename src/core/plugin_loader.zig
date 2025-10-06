@@ -6,6 +6,7 @@ const zsync = @import("zsync");
 const zlog = @import("zlog");
 const zhttp = @import("zhttp");
 const tar = std.tar;
+const GhostlangRuntime = @import("ghostlang_runtime.zig").GhostlangRuntime;
 
 pub const PluginLoader = struct {
     allocator: std.mem.Allocator,
@@ -22,21 +23,17 @@ pub const PluginLoader = struct {
 
     /// Fetch a plugin from the registry
     pub fn fetchPlugin(self: *PluginLoader, name: []const u8, version: []const u8) !void {
-        zlog.info("Fetching plugin: {s}@{s}", .{name, version});
+        zlog.info("Fetching plugin: {s}@{s}", .{ name, version });
 
         // Construct download URL
-        const url = try std.fmt.allocPrint(
-            self.allocator,
-            "{s}/{s}/{s}.tar.gz",
-            .{self.registry_url, name, version}
-        );
+        const url = try std.fmt.allocPrint(self.allocator, "{s}/{s}/{s}.tar.gz", .{ self.registry_url, name, version });
         defer self.allocator.free(url);
 
-    const plugin_relative = try normalizedPluginPath(self.allocator, name);
-    defer self.allocator.free(plugin_relative);
+        const plugin_relative = try normalizedPluginPath(self.allocator, name);
+        defer self.allocator.free(plugin_relative);
 
-    // Create plugin directory
-    const plugin_path = try std.fs.path.join(self.allocator, &[_][]const u8{ self.plugin_dir, plugin_relative });
+        // Create plugin directory
+        const plugin_path = try std.fs.path.join(self.allocator, &[_][]const u8{ self.plugin_dir, plugin_relative });
         defer self.allocator.free(plugin_path);
 
         if (try self.isPluginUpToDate(plugin_path, name, version)) {
@@ -203,65 +200,128 @@ pub const PluginLoader = struct {
         try file.writeAll(json_text);
     }
 
+    fn isSafeRelativePath(path: []const u8) bool {
+        if (path.len == 0) return false;
+        if (std.fs.path.isAbsolute(path)) return false;
+        if (std.mem.indexOf(u8, path, ":")) |_| return false;
 
-fn isSafeRelativePath(path: []const u8) bool {
-    if (path.len == 0) return false;
-    if (std.fs.path.isAbsolute(path)) return false;
-    if (std.mem.indexOf(u8, path, ":")) |_| return false;
-
-    var i: usize = 0;
-    while (i < path.len) : (i += 1) {
-        if (path[i] == '.' and i + 1 < path.len and path[i + 1] == '.') {
-            const before = if (i == 0) null else path[i - 1];
-            const after = if (i + 2 < path.len) path[i + 2] else null;
-            const before_sep = before == null or before == '/' or before == '\\';
-            const after_sep = after == null or after == '/' or after == '\\';
-            if (before_sep and after_sep) return false;
+        var i: usize = 0;
+        while (i < path.len) : (i += 1) {
+            if (path[i] == '.' and i + 1 < path.len and path[i + 1] == '.') {
+                const before = if (i == 0) null else path[i - 1];
+                const after = if (i + 2 < path.len) path[i + 2] else null;
+                const before_sep = before == null or before == '/' or before == '\\';
+                const after_sep = after == null or after == '/' or after == '\\';
+                if (before_sep and after_sep) return false;
+            }
         }
+
+        return true;
     }
 
-    return true;
-}
-
-fn trimTrailingSeparators(path: []const u8) []const u8 {
-    var end = path.len;
-    while (end > 0) : (end -= 1) {
-        const ch = path[end - 1];
-        if (ch != '/' and ch != '\\') break;
+    fn trimTrailingSeparators(path: []const u8) []const u8 {
+        var end = path.len;
+        while (end > 0) : (end -= 1) {
+            const ch = path[end - 1];
+            if (ch != '/' and ch != '\\') break;
+        }
+        return path[0..end];
     }
-    return path[0..end];
-}
 
-fn normalizedPluginPath(allocator: std.mem.Allocator, name: []const u8) ![]u8 {
-    var buffer = try allocator.alloc(u8, name.len);
-    for (name, 0..) |ch, idx| {
-        buffer[idx] = switch (ch) {
-            '.' => '/',
-            '\\' => '/',
-            else => ch,
+    fn normalizedPluginPath(allocator: std.mem.Allocator, name: []const u8) ![]u8 {
+        var buffer = try allocator.alloc(u8, name.len);
+        for (name, 0..) |ch, idx| {
+            buffer[idx] = switch (ch) {
+                '.' => '/',
+                '\\' => '/',
+                else => ch,
+            };
+        }
+        return buffer;
+    }
+
+    const manifest_file = "manifest.json";
+    const max_manifest_size: usize = 64 * 1024;
+
+    const Manifest = struct {
+        name: []const u8,
+        version: []const u8,
+        registry_url: []const u8,
+        installed_at: u64,
+    };
+    /// Load all installed plugin modules into the Ghostlang runtime.
+    pub fn loadInstalled(self: *PluginLoader, runtime: *GhostlangRuntime) !void {
+        var dir = std.fs.cwd().openDir(self.plugin_dir, .{ .iterate = true }) catch |err| {
+            if (err == error.FileNotFound) {
+                zlog.info("Plugin directory not found: {s}", .{self.plugin_dir});
+                return;
+            }
+            return err;
         };
+        defer dir.close();
+
+        var walker = try dir.walk(self.allocator);
+        defer walker.deinit();
+
+        var loaded_count: usize = 0;
+
+        while (try walker.next()) |entry| {
+            if (entry.kind != .file) continue;
+            if (!std.mem.endsWith(u8, entry.path, ".gza")) continue;
+
+            const module_name = self.relativePathToModuleName(entry.path) catch |err| {
+                zlog.warn("Skipping plugin source {s}: {any}", .{ entry.path, err });
+                continue;
+            };
+            defer self.allocator.free(module_name);
+
+            const snippet = std.fmt.allocPrint(self.allocator, "require(\"{s}\")", .{module_name}) catch |err| {
+                zlog.err("Failed to allocate require snippet for {s}: {any}", .{ module_name, err });
+                continue;
+            };
+            defer self.allocator.free(snippet);
+
+            _ = runtime.executeCode(snippet) catch |err| {
+                zlog.err("Failed to execute plugin {s}: {any}", .{ module_name, err });
+                continue;
+            };
+
+            loaded_count += 1;
+        }
+
+        zlog.info("Loaded {d} plugins from {s}", .{ loaded_count, self.plugin_dir });
     }
-    return buffer;
-}
 
-const manifest_file = "manifest.json";
-const max_manifest_size: usize = 64 * 1024;
+    /// Load a single plugin module by name (e.g. `plugins.core.file-tree`).
+    pub fn loadPlugin(self: *PluginLoader, runtime: *GhostlangRuntime, module_name: []const u8) !void {
+        const snippet = try std.fmt.allocPrint(self.allocator, "require(\"{s}\")", .{module_name});
+        defer self.allocator.free(snippet);
 
-const Manifest = struct {
-    name: []const u8,
-    version: []const u8,
-    registry_url: []const u8,
-    installed_at: u64,
-};
-    /// Load a plugin by name
-    pub fn loadPlugin(self: *PluginLoader, name: []const u8) !void {
-        _ = self;
-        zlog.info("Loading plugin: {s}", .{name});
+    _ = try runtime.executeCode(snippet);
+        zlog.info("Plugin {s} loaded", .{module_name});
+    }
 
-        // TODO: Check if plugin is installed
-        // TODO: Load plugin configuration
-        // TODO: Initialize plugin
+    fn relativePathToModuleName(self: *PluginLoader, relative_path: []const u8) ![]u8 {
+        if (!std.mem.endsWith(u8, relative_path, ".gza")) {
+            return error.InvalidPluginPath;
+        }
 
-        zlog.info("Plugin {s} loaded", .{name});
+        const stem_len = relative_path.len - ".gza".len;
+        const prefix = "plugins.";
+        const total_len = prefix.len + stem_len;
+        var buffer = try self.allocator.alloc(u8, total_len);
+
+        std.mem.copyForwards(u8, buffer[0..prefix.len], prefix);
+
+        var i: usize = 0;
+        while (i < stem_len) : (i += 1) {
+            const ch = relative_path[i];
+            buffer[prefix.len + i] = switch (ch) {
+                '/', '\\' => '.',
+                else => ch,
+            };
+        }
+
+        return buffer;
     }
 };

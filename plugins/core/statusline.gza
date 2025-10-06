@@ -1,15 +1,75 @@
 -- plugins/core/statusline.gza
--- Statusline plugin placeholder for Phantom.grim
+-- Statusline plugin wiring Grim bridge data into a formatted status segment.
+
+local bridge = require("grim.bridge")
 
 local plugin = {
     name = "statusline",
     state = {
         initialized = false,
+        options = {},
+        snapshot = nil,
     },
 }
 
 local function log(message)
     print("[statusline] " .. message)
+end
+
+local function fetch_git_state(opts)
+    local cwd = (opts and opts.cwd) or "."
+    local status = bridge.git_status(cwd) or {}
+    local branch = status.branch or bridge.git_branch(cwd) or "main"
+
+    local staged = status.staged or {}
+    local unstaged = status.unstaged or {}
+    local untracked = status.untracked or {}
+
+    local function count(list)
+        if type(list) ~= "table" then
+            return 0
+        end
+        return #list
+    end
+
+    return {
+        branch = branch,
+        staged = count(staged),
+        unstaged = count(unstaged),
+        untracked = count(untracked),
+    }
+end
+
+local function build_segments(snapshot)
+    local segments = {}
+
+    table.insert(segments, snapshot.mode or "NORMAL")
+    table.insert(segments, snapshot.git.branch .. "●")
+
+    if snapshot.filename then
+        table.insert(segments, snapshot.filename)
+    end
+
+    if snapshot.position then
+        table.insert(segments, snapshot.position)
+    end
+
+    if snapshot.git.staged > 0 or snapshot.git.unstaged > 0 or snapshot.git.untracked > 0 then
+        table.insert(segments, "Δ" .. tostring(snapshot.git.staged) .. "/" .. tostring(snapshot.git.unstaged) .. "/" .. tostring(snapshot.git.untracked))
+    end
+
+    return table.concat(segments, " | ")
+end
+
+local function capture_snapshot(opts)
+    local git = fetch_git_state(opts)
+
+    return {
+        mode = opts.mode or "NORMAL",
+        filename = opts.filename,
+        position = opts.position,
+        git = git,
+    }
 end
 
 function plugin.setup(opts)
@@ -20,14 +80,36 @@ function plugin.setup(opts)
     plugin.state.initialized = true
     plugin.state.options = opts or {}
 
-    -- TODO: Implement statusline rendering and integration with Grim APIs.
+    plugin.state.snapshot = capture_snapshot(plugin.state.options)
+    plugin.state.line = build_segments(plugin.state.snapshot)
+
     log("initialized")
 
     return plugin
 end
 
-function plugin.refresh()
-    log("refresh placeholder")
+function plugin.refresh(opts)
+    local merged = {}
+
+    for key, value in pairs(plugin.state.options or {}) do
+        merged[key] = value
+    end
+
+    for key, value in pairs(opts or {}) do
+        merged[key] = value
+    end
+
+    plugin.state.snapshot = capture_snapshot(merged)
+    plugin.state.line = build_segments(plugin.state.snapshot)
+
+    return plugin.state.line
+end
+
+function plugin.current()
+    if not plugin.state.line then
+        plugin.refresh()
+    end
+    return plugin.state.line
 end
 
 return plugin.setup()

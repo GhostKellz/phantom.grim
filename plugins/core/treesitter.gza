@@ -1,16 +1,42 @@
 -- plugins/core/treesitter.gza
--- Treesitter integration stub for Phantom.grim
+-- Treesitter integration stub wired to Grim bridge.
+
+local bridge = require("grim.bridge")
 
 local plugin = {
     name = "treesitter",
     state = {
         initialized = false,
         parsers = {},
+        highlights = {},
     },
 }
 
 local function log(message)
     print("[treesitter] " .. message)
+end
+
+local function ensure_language(language)
+    if plugin.state.parsers[language] then
+        return plugin.state.parsers[language]
+    end
+
+    local response = bridge.syntax_highlight(language)
+    if type(response) ~= "table" then
+        log("bridge returned non-table for " .. tostring(language))
+        plugin.state.parsers[language] = {
+            language = language,
+            highlights = {},
+        }
+        return plugin.state.parsers[language]
+    end
+
+    plugin.state.parsers[language] = response
+    plugin.state.highlights[language] = response.highlights or {}
+
+    log("loaded syntax data for " .. tostring(language))
+
+    return plugin.state.parsers[language]
 end
 
 function plugin.setup(opts)
@@ -21,14 +47,24 @@ function plugin.setup(opts)
     plugin.state.initialized = true
     plugin.state.options = opts or {}
 
-    -- TODO: Wire Grove-backed syntax trees and highlight injection.
+    if opts and type(opts.languages) == "table" then
+        for _, language in ipairs(opts.languages) do
+            ensure_language(language)
+        end
+    end
+
     log("initialized")
 
     return plugin
 end
 
 function plugin.ensure_parser(language)
-    log("ensure_parser placeholder for " .. tostring(language))
+    return ensure_language(language)
+end
+
+function plugin.highlights_for(language)
+    ensure_language(language)
+    return plugin.state.highlights[language] or {}
 end
 
 return plugin.setup()

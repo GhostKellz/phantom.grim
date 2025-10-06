@@ -1,16 +1,44 @@
 -- plugins/core/file-tree.gza
 -- File tree plugin for Phantom.grim
 
+local bridge = require("grim.bridge")
+
 local plugin = {
     name = "file-tree",
     state = {
         initialized = false,
         options = {},
+        nodes = {},
+        open = false,
     },
 }
 
 local function log(message)
     print("[file-tree] " .. message)
+end
+
+local function list_directory(root)
+    local response = bridge.fuzzy_find(root)
+    local items = {}
+
+    if type(response) == "table" then
+        if type(response.items) == "table" then
+            items = response.items
+        else
+            items = response
+        end
+    end
+
+    local nodes = {}
+    for _, entry in ipairs(items) do
+        if type(entry) == "table" and entry.path then
+            table.insert(nodes, entry.path)
+        elseif type(entry) == "string" then
+            table.insert(nodes, entry)
+        end
+    end
+
+    return nodes
 end
 
 function plugin.setup(opts)
@@ -21,18 +49,29 @@ function plugin.setup(opts)
     plugin.state.initialized = true
     plugin.state.options = opts or {}
 
-    -- TODO: Initialize file tree UI, keymaps, and events.
-    log("initialized")
+    local root = plugin.state.options.root or "."
+    plugin.state.nodes = list_directory(root)
+
+    log("initialized (" .. tostring(#plugin.state.nodes) .. " entries)")
 
     return plugin
 end
 
 function plugin.toggle()
-    log("toggle placeholder")
+    plugin.state.open = not plugin.state.open
+    log("file tree " .. (plugin.state.open and "opened" or "closed"))
+    return plugin.state.open
 end
 
 function plugin.open(path)
-    log("open placeholder for " .. tostring(path))
+    path = path or plugin.state.options.root or "."
+    plugin.state.nodes = list_directory(path)
+    log("loaded " .. tostring(#plugin.state.nodes) .. " entries for " .. tostring(path))
+    return plugin.state.nodes
+end
+
+function plugin.nodes()
+    return plugin.state.nodes
 end
 
 return plugin.setup()

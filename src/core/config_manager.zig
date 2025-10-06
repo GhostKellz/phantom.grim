@@ -4,6 +4,7 @@
 const std = @import("std");
 const flare = @import("flare");
 const zlog = @import("zlog");
+const PluginLoader = @import("plugin_loader.zig").PluginLoader;
 const GhostlangRuntime = @import("ghostlang_runtime.zig").GhostlangRuntime;
 
 pub const ConfigManager = struct {
@@ -11,6 +12,8 @@ pub const ConfigManager = struct {
     flare_config: flare.Config,
     ghostlang_runtime: GhostlangRuntime,
     config_dir: []const u8,
+    plugin_loader: PluginLoader,
+    plugin_dir: []const u8,
 
     pub fn init(allocator: std.mem.Allocator, config_dir: []const u8) !ConfigManager {
         // Initialize Flare config
@@ -23,20 +26,33 @@ pub const ConfigManager = struct {
         flare_ptr.* = flare_config;
 
         // Initialize Ghostlang runtime
-    var ghostlang_runtime = try GhostlangRuntime.init(allocator, flare_ptr, config_dir);
+        var ghostlang_runtime = try GhostlangRuntime.init(allocator, flare_ptr, config_dir);
         errdefer ghostlang_runtime.deinit();
+
+        const plugin_dir = try std.fs.path.join(allocator, &[_][]const u8{ config_dir, "plugins" });
+        errdefer allocator.free(plugin_dir);
+        std.fs.cwd().makePath(plugin_dir) catch |err| switch (err) {
+            error.PathAlreadyExists => {},
+            else => return err,
+        };
+
+        const default_registry = "https://registry.phantom.grim";
+    const plugin_loader = PluginLoader.init(allocator, default_registry, plugin_dir);
 
         return ConfigManager{
             .allocator = allocator,
             .flare_config = flare_config,
             .ghostlang_runtime = ghostlang_runtime,
             .config_dir = config_dir,
+            .plugin_loader = plugin_loader,
+            .plugin_dir = plugin_dir,
         };
     }
 
     pub fn deinit(self: *ConfigManager) void {
         self.ghostlang_runtime.deinit();
         self.flare_config.deinit();
+        self.allocator.free(self.plugin_dir);
     }
 
     /// Load all configuration files in order
@@ -104,36 +120,7 @@ pub const ConfigManager = struct {
 
     /// Load plugin configurations
     fn loadPluginConfigs(self: *ConfigManager) !void {
-        const plugins_dir = try std.fs.path.join(self.allocator, &[_][]const u8{ self.config_dir, "plugins" });
-        defer self.allocator.free(plugins_dir);
-
-        var dir = std.fs.cwd().openDir(plugins_dir, .{ .iterate = true }) catch |err| {
-            if (err == error.FileNotFound) {
-                zlog.info("Plugins directory not found: {s}", .{plugins_dir});
-                return;
-            }
-            return err;
-        };
-        defer dir.close();
-
-        var walker = try dir.walk(self.allocator);
-        defer walker.deinit();
-
-        while (try walker.next()) |entry| {
-            if (entry.kind != .file) continue;
-            if (!std.mem.endsWith(u8, entry.path, ".gza")) continue;
-
-            const module_name = pluginPathToModuleName(self.allocator, entry.path) catch |err| {
-                zlog.warn("Skipping plugin file {s}: {any}", .{ entry.path, err });
-                continue;
-            };
-            defer self.allocator.free(module_name);
-
-            const snippet = try std.fmt.allocPrint(self.allocator, "require(\"{s}\")", .{module_name});
-            defer self.allocator.free(snippet);
-
-            _ = try self.ghostlang_runtime.executeCode(snippet);
-        }
+        try self.plugin_loader.loadInstalled(&self.ghostlang_runtime);
     }
 
     fn pluginPathToModuleName(allocator: std.mem.Allocator, relative_path: []const u8) ![]u8 {

@@ -1,0 +1,116 @@
+-- runtime/lib/grim/bridge.gza
+-- Thin Ghostlang wrapper around the Grim C FFI bridge.
+-- Provides safe helpers with graceful fallbacks when the editor bridge
+-- has not been linked yet (e.g. during unit tests).
+
+local bridge = {}
+local ffi = rawget(_G, "ffi")
+
+local json_ok, json = pcall(require, "json")
+if not json_ok then
+    json = nil
+end
+
+local symbol_aliases = {
+    fuzzy_find = { "grim_fuzzy_find", "grim_fuzzy_files" },
+    git_status = { "grim_git_status", "grim_gitStatus" },
+    git_branch = { "grim_git_branch", "grim_gitBranch" },
+    harpoon_list = { "grim_harpoon_list", "grim_harpoonMarks" },
+    syntax_highlight = { "grim_syntax_highlight", "grim_syntaxHighlight" },
+}
+
+local function decode(payload)
+    if type(payload) ~= "string" then
+        return payload
+    end
+
+    if json and json.decode then
+        local ok, result = pcall(json.decode, payload)
+        if ok then
+            return result
+        end
+    end
+
+    return payload
+end
+
+local function fallback(kind)
+    if kind == "fuzzy_find" then
+        return {
+            items = {},
+            source = "fallback",
+        }
+    elseif kind == "git_status" then
+        return {
+            branch = "main",
+            staged = {},
+            unstaged = {},
+            untracked = {},
+        }
+    elseif kind == "git_branch" then
+        return "main"
+    elseif kind == "harpoon_list" then
+        return {}
+    elseif kind == "syntax_highlight" then
+        return {
+            language = "plain",
+            highlights = {},
+        }
+    end
+
+    return nil
+end
+
+local function call_alias(kind, ...)
+    if not ffi then
+        return fallback(kind)
+    end
+
+    local aliases = symbol_aliases[kind]
+    if not aliases then
+        error("grim.bridge unknown symbol kind: " .. tostring(kind))
+    end
+
+    for _, symbol in ipairs(aliases) do
+        local fn = ffi[symbol]
+        if fn then
+            local ok, result = pcall(fn, ...)
+            if ok then
+                return decode(result)
+            end
+        end
+    end
+
+    local value = fallback(kind)
+    if value ~= nil then
+        return value
+    end
+
+    error("Grim FFI symbol not found for " .. kind)
+end
+
+function bridge.available()
+    return ffi ~= nil
+end
+
+function bridge.fuzzy_find(path)
+    return call_alias("fuzzy_find", path or ".")
+end
+
+function bridge.git_status(path)
+    return call_alias("git_status", path or ".")
+end
+
+function bridge.git_branch(path)
+    return call_alias("git_branch", path or ".")
+end
+
+function bridge.harpoon_list()
+    return call_alias("harpoon_list")
+end
+
+function bridge.syntax_highlight(buf)
+    return call_alias("syntax_highlight", buf or "")
+end
+
+return bridge

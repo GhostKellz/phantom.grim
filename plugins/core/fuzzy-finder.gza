@@ -1,15 +1,43 @@
 -- plugins/core/fuzzy-finder.gza
 -- Fuzzy finder plugin for Phantom.grim
 
+local bridge = require("grim.bridge")
+
 local plugin = {
     name = "fuzzy-finder",
     state = {
         initialized = false,
+        options = {},
+        results = {},
     },
 }
 
 local function log(message)
     print("[fuzzy-finder] " .. message)
+end
+
+local function extract_items(response)
+    if type(response) == "table" then
+        if type(response.items) == "table" then
+            return response.items
+        end
+        return response
+    end
+
+    return {}
+end
+
+local function refresh_index(opts)
+    local cwd = opts.cwd or "."
+    local response = bridge.fuzzy_find(cwd)
+    local items = extract_items(response)
+
+    log("indexed " .. tostring(#items) .. " entries from " .. cwd)
+
+    return {
+        raw = response,
+        items = items,
+    }
 end
 
 function plugin.setup(opts)
@@ -20,13 +48,52 @@ function plugin.setup(opts)
     plugin.state.initialized = true
     plugin.state.options = opts or {}
 
-    -- TODO: Wire up picker providers, history sources, and command plumbing.
-    log("initialized")
+    plugin.state.results = refresh_index(plugin.state.options)
 
     return plugin
 end
 
 function plugin.find_files()
+    plugin.state.results = refresh_index(plugin.state.options)
+    return plugin.state.results.items
+end
+
+function plugin.live_grep(query)
+    local opts = plugin.state.options or {}
+    local cwd = opts.cwd or "."
+
+    local response = bridge.fuzzy_find(cwd)
+    local items = extract_items(response)
+
+    if query and type(query) == "string" and #query > 0 then
+        local filtered = {}
+        for _, entry in ipairs(items) do
+            local candidate = entry
+            if type(entry) == "table" and entry.path then
+                candidate = entry.path
+            end
+
+            if type(candidate) == "string" and candidate:lower():find(query:lower(), 1, true) then
+                table.insert(filtered, entry)
+            end
+        end
+        return filtered
+    end
+
+    return items
+end
+
+function plugin.buffers()
+    local harpoon = bridge.harpoon_list()
+    if type(harpoon) ~= "table" then
+        return {}
+    end
+
+    log("serving " .. tostring(#harpoon) .. " harpoon buffers")
+    return harpoon
+end
+
+return plugin.setup()
     log("find_files placeholder")
 end
 

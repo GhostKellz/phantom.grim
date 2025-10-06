@@ -2,6 +2,7 @@
 -- Core Ghostlang helpers for Phantom.grim configuration loading
 
 local core = {}
+local grim = require("grim.bridge")
 local state = {
     initialized = false,
     loaded = {},
@@ -61,6 +62,8 @@ function core.init(opts)
         print("[core] Phantom.grim core runtime ready")
     end
 
+    state.bridge = grim
+
     return state
 end
 
@@ -119,6 +122,11 @@ function core.reset()
     state.loaded = {}
     state.history = {}
     state.opts = nil
+    state.bridge = nil
+end
+
+function core.bridge()
+    return state.bridge
 end
 
 return core
