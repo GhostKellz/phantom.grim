@@ -75,9 +75,18 @@ local function register_plugins(list)
     if type(list) ~= "table" then
         return
     end
-    for _, name in ipairs(list) do
-        plugin_manager.register(name)
-        table.insert(phantom.state.plugins, name)
+    for _, entry in ipairs(list) do
+        local descriptor = plugin_manager.register(entry)
+        if descriptor and descriptor.name then
+            table.insert(phantom.state.plugins, descriptor.name)
+        elseif type(entry) == "string" then
+            table.insert(phantom.state.plugins, entry)
+        elseif type(entry) == "table" then
+            local name = entry.name or entry[1]
+            if type(name) == "string" then
+                table.insert(phantom.state.plugins, name)
+            end
+        end
     end
 end
 
@@ -126,6 +135,25 @@ function phantom.setup(spec)
     phantom.state.finalized = true
     log("setup finalized")
     return phantom
+end
+
+function phantom.lazy(spec)
+    if spec == nil then
+        return nil
+    end
+    if type(spec) == "table" and spec[1] and not spec.name then
+        local results = {}
+        for _, entry in ipairs(spec) do
+            results[#results + 1] = phantom.lazy(entry)
+        end
+        return results
+    end
+
+    local descriptor = plugin_manager.register(spec)
+    if descriptor and descriptor.name then
+        table.insert(phantom.state.plugins, descriptor.name)
+    end
+    return descriptor
 end
 
 function phantom.summary()

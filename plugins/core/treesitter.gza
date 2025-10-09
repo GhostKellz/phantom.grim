@@ -1,5 +1,5 @@
 -- plugins/core/treesitter.gza
--- Treesitter integration stub wired to Grim bridge.
+-- Feature-rich Treesitter integration with language management and commands.
 
 local bridge = require("grim.bridge")
 
@@ -8,13 +8,28 @@ local plugin = {
     state = {
         initialized = false,
         options = {},
+        registry = {},
+        features = {},
         cache = {},
     },
 }
 
-local function log(message)
-    print("[treesitter] " .. message)
-end
+local default_languages = {
+    "ghostlang",
+    "zig",
+    "lua",
+    "rust",
+    "typescript",
+    "tsx",
+    "javascript",
+    "json",
+    "toml",
+    "yaml",
+    "python",
+    "go",
+    "c",
+    "cpp",
+}
 
 local extension_map = {
     zig = "zig",
@@ -23,27 +38,230 @@ local extension_map = {
     gza = "ghostlang",
     js = "javascript",
     ts = "typescript",
+    tsx = "tsx",
     json = "json",
     toml = "toml",
+    yaml = "yaml",
+    py = "python",
+    go = "go",
+    c = "c",
+    h = "c",
+    cpp = "cpp",
+    hpp = "cpp",
 }
+
+local default_features = {
+    highlight = true,
+    indent = false,
+    fold = false,
+    incremental_selection = false,
+}
+
+local default_options = {
+    ensure_installed = default_languages,
+    auto_install = true,
+    providers = {},
+    features = default_features,
+}
+
+local function log(message)
+    print("[treesitter] " .. message)
+end
+
+local function clone_table(value)
+    if type(value) ~= "table" then
+        return value
+    end
+    local copy = {}
+    for key, entry in pairs(value) do
+        copy[key] = clone_table(entry)
+    end
+    return copy
+end
+
+local function merge_tables(base, override)
+    local result = clone_table(base)
+    for key, value in pairs(override or {}) do
+        if type(value) == "table" and type(result[key]) == "table" then
+            result[key] = merge_tables(result[key], value)
+        else
+            result[key] = clone_table(value)
+        end
+    end
+    return result
+end
+
+local function normalize_language(name)
+    if type(name) ~= "string" then
+        return nil
+    end
+    local trimmed = name:match("^%s*(.-)%s*$")
+    if not trimmed or trimmed == "" then
+        return nil
+    end
+    return trimmed:lower()
+end
 
 local function guess_language(opts)
     if opts and type(opts.language) == "string" then
         return opts.language
     end
-
     if opts and type(opts.path) == "string" then
         local ext = opts.path:match("%.([%w_%-]+)$")
         if ext and extension_map[ext] then
             return extension_map[ext]
         end
     end
-
     return "plain"
 end
 
 local function cache_key(language, content)
     return language .. "::" .. tostring(#content)
+end
+
+local function normalize_highlight_entry(entry)
+    if type(entry) ~= "table" then
+        return nil
+    end
+    local start_byte = tonumber(entry.start or entry.s or entry[1] or 0)
+    local stop_byte = tonumber(entry.stop or entry[2] or entry["end"] or start_byte)
+    if not start_byte or not stop_byte then
+        return nil
+    end
+    local token = entry.token or entry.type or entry[3] or "text"
+    token = tostring(token)
+    return string.format("%d,%d,%s", start_byte, stop_byte, token)
+end
+
+local function ensure_registry_entry(language)
+    plugin.state.registry[language] = plugin.state.registry[language] or {
+        language = language,
+        installed = false,
+        ensured = false,
+        last_probe = nil,
+        last_error = nil,
+    }
+    return plugin.state.registry[language]
+end
+
+local function probe_language(language)
+    local ok, response = pcall(bridge.syntax_highlight, language, "")
+    if ok then
+        return true, response
+    end
+    return false, response
+end
+
+local function install_language(language, opts)
+    local entry = ensure_registry_entry(language)
+    entry.ensured = true
+
+    local provider = plugin.state.options.providers.install
+    if type(provider) == "function" then
+        local ok, result = pcall(provider, language, opts)
+        if ok then
+            entry.installed = result ~= false
+            entry.last_error = nil
+            entry.last_probe = os.time()
+            return entry
+        else
+            entry.installed = false
+            entry.last_error = result
+            entry.last_probe = os.time()
+            log("provider install failed for " .. language .. ": " .. tostring(result))
+            return entry
+        end
+    end
+
+    local ok, err = probe_language(language)
+    entry.installed = ok
+    entry.last_error = ok and nil or err
+    entry.last_probe = os.time()
+
+    if ok then
+        log("grammar available for " .. language)
+    else
+        log("grammar missing for " .. language .. ": " .. tostring(err))
+    end
+
+    return entry
+end
+
+local function ensure_languages(list)
+    for _, name in ipairs(list or {}) do
+        local language = normalize_language(name)
+        if language then
+            local entry = ensure_registry_entry(language)
+            entry.ensured = true
+            if plugin.state.options.auto_install then
+                install_language(language)
+            end
+        end
+    end
+end
+
+local function register_command(name, fn, opts)
+    if type(command) ~= "function" then
+        return
+    end
+    local ok, err = pcall(command, name, fn, opts)
+    if not ok then
+        log("failed to register command " .. name .. ": " .. tostring(err))
+    end
+end
+
+local function parse_args(ctx)
+    if type(ctx) == "string" then
+        local list = {}
+        for token in ctx:gmatch("%S+") do
+            list[#list + 1] = token
+        end
+        return list
+    end
+    if type(ctx) == "table" then
+        if type(ctx.args) == "string" then
+            return parse_args(ctx.args)
+        end
+        local result = {}
+        local idx = 1
+        while ctx[idx] do
+            if type(ctx[idx]) == "string" and #ctx[idx] > 0 then
+                result[#result + 1] = ctx[idx]
+            end
+            idx = idx + 1
+        end
+        return result
+    end
+    return {}
+end
+
+local function ensure_commands()
+    register_command("PhantomTSInstall", function(ctx)
+        local args = parse_args(ctx)
+        local targets = args
+        if #targets == 0 then
+            targets = plugin.state.options.ensure_installed or {}
+        end
+        ensure_languages(targets)
+        print("[treesitter] ensured " .. tostring(#targets) .. " languages")
+    end, { desc = "Ensure Treesitter grammars are installed" })
+
+    register_command("PhantomTSUpdate", function()
+        for language, entry in pairs(plugin.state.registry) do
+            install_language(language, { force = true })
+        end
+        print("[treesitter] grammar registry refreshed")
+    end, { desc = "Re-probe Treesitter grammars" })
+
+    register_command("PhantomTSInfo", function()
+        print("[treesitter] installed grammars")
+        for language, entry in pairs(plugin.state.registry) do
+            local status = entry.installed and "ok" or "missing"
+            local ensured = entry.ensured and "*" or " "
+            local probe = entry.last_probe and os.date("%H:%M:%S", entry.last_probe) or "—"
+            print(string.format(" %s %-12s %-8s last %s", ensured, language, status, probe))
+        end
+    end, { desc = "Show Treesitter grammar registry" })
 end
 
 function plugin.setup(opts)
@@ -52,39 +270,74 @@ function plugin.setup(opts)
     end
 
     plugin.state.initialized = true
-    plugin.state.options = opts or {}
+    plugin.state.options = merge_tables(default_options, opts or {})
+    plugin.state.features = merge_tables(default_features, plugin.state.options.features or {})
     plugin.state.cache = {}
 
-    log("initialized")
+    ensure_languages(plugin.state.options.ensure_installed)
+    ensure_commands()
 
+    log("initialized")
     return plugin
 end
 
-local function normalize_highlight_entry(entry)
-    if type(entry) ~= "table" then
-        return nil
+function plugin.ensure(list)
+    ensure_languages(list or plugin.state.options.ensure_installed)
+    return plugin.state.registry
+end
+
+function plugin.features()
+    return clone_table(plugin.state.features)
+end
+
+function plugin.enable(feature)
+    if plugin.state.features[feature] ~= nil then
+        plugin.state.features[feature] = true
     end
+end
 
-    local start_byte = tonumber(entry.start or entry.s or entry[1] or 0)
-    local stop_byte = tonumber(entry.stop or entry[2] or entry["end"] or start_byte)
-    if not start_byte or not stop_byte then
-        return nil
+function plugin.disable(feature)
+    if plugin.state.features[feature] ~= nil then
+        plugin.state.features[feature] = false
     end
+end
 
-    local token = entry.token or entry.type or entry[3] or "text"
-    token = tostring(token)
+function plugin.toggle(feature, value)
+    if plugin.state.features[feature] == nil then
+        return
+    end
+    if value == nil then
+        plugin.state.features[feature] = not plugin.state.features[feature]
+    else
+        plugin.state.features[feature] = not not value
+    end
+end
 
-    return string.format("%d,%d,%s", start_byte, stop_byte, token)
+function plugin.languages()
+    local list = {}
+    for language, entry in pairs(plugin.state.registry) do
+        list[#list + 1] = {
+            language = language,
+            installed = entry.installed,
+            ensured = entry.ensured,
+            last_probe = entry.last_probe,
+            last_error = entry.last_error,
+        }
+    end
+    table.sort(list, function(a, b)
+        return a.language < b.language
+    end)
+    return list
 end
 
 function plugin.highlight_buffer(opts)
     opts = opts or {}
     local source = opts.content or ""
-    if source == "" then
+    if source == "" or not plugin.state.features.highlight then
         return ""
     end
 
-    local language = guess_language(opts)
+    local language = normalize_language(guess_language(opts)) or "plain"
     local key = cache_key(language, source)
     if plugin.state.cache[key] then
         return plugin.state.cache[key]
@@ -109,6 +362,13 @@ end
 
 function plugin.reset()
     plugin.state.cache = {}
+end
+
+function plugin.status()
+    return {
+        features = plugin.features(),
+        languages = plugin.languages(),
+    }
 end
 
 return plugin.setup()

@@ -158,6 +158,35 @@ function plugin.update_plugin(name, version)
     return true
 end
 
+function plugin.load_plugin(name)
+    if type(name) ~= "string" or #name == 0 then
+        log("usage: :PhantomPluginLoad <name>")
+        return false
+    end
+
+    local result = plugin_manager.load(name, { kind = "command", source = ":PhantomPluginLoad" })
+    if result then
+        log("loaded " .. name)
+        return true
+    end
+
+    log("failed to load " .. name)
+    return false
+end
+
+function plugin.trigger_descriptor(identifier, payload)
+    if type(identifier) ~= "string" or #identifier == 0 then
+        log("usage: :PhantomPluginTrigger <identifier>")
+        return false
+    end
+
+    local ok = plugin_manager.trigger(identifier, payload)
+    if not ok then
+        log("trigger failed for " .. identifier)
+    end
+    return ok
+end
+
 function plugin.setup()
     if plugin.state.initialized then
         return plugin
@@ -212,6 +241,24 @@ function plugin.setup()
         plugin.update_plugin(args[1], args[2])
         plugin.status()
     end, { desc = "Update an installed Phantom.grim plugin" })
+
+    register_command("PhantomPluginLoad", function(ctx)
+        local args = parse_args(ctx)
+        if #args == 0 then
+            log("usage: :PhantomPluginLoad <name>")
+            return
+        end
+        plugin.load_plugin(args[1])
+    end, { desc = "Force load a Phantom.grim plugin", hidden = true })
+
+    register_command("PhantomPluginTrigger", function(ctx)
+        local args = parse_args(ctx)
+        if #args == 0 then
+            log("usage: :PhantomPluginTrigger <identifier>")
+            return
+        end
+        plugin.trigger_descriptor(args[1], { ctx = ctx, args = args })
+    end, { desc = "Internal lazy-load trigger", hidden = true })
 
     log("commands registered")
     return plugin
