@@ -7,8 +7,8 @@ local plugin = {
     name = "treesitter",
     state = {
         initialized = false,
-        parsers = {},
-        highlights = {},
+        options = {},
+        cache = {},
     },
 }
 
@@ -16,27 +16,34 @@ local function log(message)
     print("[treesitter] " .. message)
 end
 
-local function ensure_language(language)
-    if plugin.state.parsers[language] then
-        return plugin.state.parsers[language]
+local extension_map = {
+    zig = "zig",
+    rs = "rust",
+    lua = "lua",
+    gza = "ghostlang",
+    js = "javascript",
+    ts = "typescript",
+    json = "json",
+    toml = "toml",
+}
+
+local function guess_language(opts)
+    if opts and type(opts.language) == "string" then
+        return opts.language
     end
 
-    local response = bridge.syntax_highlight(language)
-    if type(response) ~= "table" then
-        log("bridge returned non-table for " .. tostring(language))
-        plugin.state.parsers[language] = {
-            language = language,
-            highlights = {},
-        }
-        return plugin.state.parsers[language]
+    if opts and type(opts.path) == "string" then
+        local ext = opts.path:match("%.([%w_%-]+)$")
+        if ext and extension_map[ext] then
+            return extension_map[ext]
+        end
     end
 
-    plugin.state.parsers[language] = response
-    plugin.state.highlights[language] = response.highlights or {}
+    return "plain"
+end
 
-    log("loaded syntax data for " .. tostring(language))
-
-    return plugin.state.parsers[language]
+local function cache_key(language, content)
+    return language .. "::" .. tostring(#content)
 end
 
 function plugin.setup(opts)
@@ -46,25 +53,62 @@ function plugin.setup(opts)
 
     plugin.state.initialized = true
     plugin.state.options = opts or {}
-
-    if opts and type(opts.languages) == "table" then
-        for _, language in ipairs(opts.languages) do
-            ensure_language(language)
-        end
-    end
+    plugin.state.cache = {}
 
     log("initialized")
 
     return plugin
 end
 
-function plugin.ensure_parser(language)
-    return ensure_language(language)
+local function normalize_highlight_entry(entry)
+    if type(entry) ~= "table" then
+        return nil
+    end
+
+    local start_byte = tonumber(entry.start or entry.s or entry[1] or 0)
+    local stop_byte = tonumber(entry.stop or entry[2] or entry["end"] or start_byte)
+    if not start_byte or not stop_byte then
+        return nil
+    end
+
+    local token = entry.token or entry.type or entry[3] or "text"
+    token = tostring(token)
+
+    return string.format("%d,%d,%s", start_byte, stop_byte, token)
 end
 
-function plugin.highlights_for(language)
-    ensure_language(language)
-    return plugin.state.highlights[language] or {}
+function plugin.highlight_buffer(opts)
+    opts = opts or {}
+    local source = opts.content or ""
+    if source == "" then
+        return ""
+    end
+
+    local language = guess_language(opts)
+    local key = cache_key(language, source)
+    if plugin.state.cache[key] then
+        return plugin.state.cache[key]
+    end
+
+    local response = bridge.syntax_highlight(language, source)
+    local lines = {}
+
+    if type(response) == "table" then
+        for _, entry in ipairs(response) do
+            local normalized = normalize_highlight_entry(entry)
+            if normalized then
+                table.insert(lines, normalized)
+            end
+        end
+    end
+
+    local result = table.concat(lines, "\n")
+    plugin.state.cache[key] = result
+    return result
+end
+
+function plugin.reset()
+    plugin.state.cache = {}
 end
 
 return plugin.setup()

@@ -1,0 +1,177 @@
+-- plugins/core/plugin-manager.gza
+-- Lightweight plugin registry and status tracker for Phantom.grim.
+
+local core = require("core")
+
+local plugin = {
+    name = "plugin-manager",
+    state = {
+        initialized = false,
+        defaults = {
+            "core.file-tree",
+            "core.fuzzy-finder",
+            "core.statusline",
+            "core.treesitter",
+            "core.zap-ai",
+            "core.theme",
+            "editor.theme-commands",
+            "editor.plugin-commands",
+            "extras.health",
+        },
+        registered = {},
+        ensured = false,
+    },
+}
+
+local function log(message)
+    print("[plugin-manager] " .. message)
+end
+
+local function normalize(name)
+    if type(name) ~= "string" then
+        return nil
+    end
+    local trimmed = name:gsub("%s+", "")
+    if trimmed == "" then
+        return nil
+    end
+    trimmed = trimmed:gsub("/", ".")
+    return trimmed
+end
+
+local function dedupe(list)
+    local seen = {}
+    local result = {}
+    for _, value in ipairs(list or {}) do
+        local key = normalize(value)
+        if key and not seen[key] then
+            seen[key] = true
+            table.insert(result, key)
+        end
+    end
+    return result
+end
+
+function plugin.setup(opts)
+    if plugin.state.initialized then
+        return plugin
+    end
+
+    plugin.state.initialized = true
+    plugin.state.registered = {}
+
+    if opts and type(opts.defaults) == "table" then
+        plugin.state.defaults = dedupe(opts.defaults)
+    else
+        plugin.state.defaults = dedupe(plugin.state.defaults)
+    end
+
+    log("initialized")
+    return plugin
+end
+
+function plugin.register(name)
+    local normalized = normalize(name)
+    if not normalized then
+        return false
+    end
+
+    plugin.state.registered[normalized] = true
+    plugin.state.ensured = false
+    return true
+end
+
+function plugin.register_many(list)
+    for _, name in ipairs(list or {}) do
+        plugin.register(name)
+    end
+end
+
+function plugin.ensure(list)
+    local merged = {}
+    for _, name in ipairs(plugin.state.defaults or {}) do
+        table.insert(merged, name)
+    end
+    for name, _ in pairs(plugin.state.registered or {}) do
+        table.insert(merged, name)
+    end
+    for _, name in ipairs(list or {}) do
+        table.insert(merged, name)
+    end
+
+    merged = dedupe(merged)
+    if #merged == 0 then
+        return {}
+    end
+
+    core.ensure_plugins(merged)
+    plugin.state.ensured = true
+    return merged
+end
+
+function plugin.ensure_defaults()
+    return plugin.ensure()
+end
+
+function plugin.list()
+    local list = {}
+    for name, _ in pairs(plugin.state.registered or {}) do
+        table.insert(list, name)
+    end
+    table.sort(list)
+    return list
+end
+
+function plugin.status()
+    local loaded = {}
+    for _, name in ipairs(core.loaded_plugins() or {}) do
+        loaded[name] = true
+    end
+
+    local registered = {}
+    for _, name in ipairs(plugin.state.defaults or {}) do
+        table.insert(registered, { name = name, state = loaded[name] and "loaded" or "pending" })
+    end
+    for name, _ in pairs(plugin.state.registered or {}) do
+        table.insert(registered, { name = name, state = loaded[name] and "loaded" or "pending" })
+    end
+
+    table.sort(registered, function(a, b)
+        return a.name < b.name
+    end)
+
+    return {
+        ensured = plugin.state.ensured,
+        entries = registered,
+    }
+end
+
+function plugin.loaded(name)
+    return core.is_loaded(name)
+end
+
+function plugin.report()
+    local status = plugin.status()
+    local lines = {
+        "[phantom.grim] plugin status",
+        "  ensured : " .. tostring(status.ensured),
+        "  entries : " .. tostring(#(status.entries or {})),
+    }
+    for _, entry in ipairs(status.entries or {}) do
+        table.insert(lines, string.format("    - %-32s %s", entry.name, entry.state))
+    end
+    local report = table.concat(lines, "\n")
+    print(report)
+    return report, status
+end
+
+function plugin.commands()
+    return {
+        ensure = plugin.ensure_defaults,
+        list = plugin.list,
+        status = plugin.status,
+        report = plugin.report,
+    }
+end
+
+return plugin.setup()

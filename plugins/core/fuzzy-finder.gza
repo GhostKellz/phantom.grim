@@ -1,5 +1,5 @@
 -- plugins/core/fuzzy-finder.gza
--- Fuzzy finder plugin for Phantom.grim
+-- Enhanced fuzzy finder plugin with query-aware highlighting.
 
 local bridge = require("grim.bridge")
 
@@ -8,7 +8,14 @@ local plugin = {
     state = {
         initialized = false,
         options = {},
-        results = {},
+        results = {
+            cwd = ".",
+            raw = nil,
+            items = {},
+            filtered = {},
+            decorated = {},
+            query = "",
+        },
     },
 }
 
@@ -27,17 +34,235 @@ local function extract_items(response)
     return {}
 end
 
-local function refresh_index(opts)
-    local cwd = opts.cwd or "."
-    local response = bridge.fuzzy_find(cwd)
-    local items = extract_items(response)
+local function normalize_entry(entry)
+    if type(entry) == "table" and entry.path then
+        return entry
+    elseif type(entry) == "string" then
+        return { path = entry }
+    end
+    return nil
+end
 
-    log("indexed " .. tostring(#items) .. " entries from " .. cwd)
+local function highlight_basename(path, highlights)
+    local capture_start = path:match("().[^/\\]*$") or 1
+    local basename = path:sub(capture_start)
+    if #basename == 0 then
+        return capture_start
+    end
+    table.insert(highlights, {
+        start = capture_start - 1,
+        stop = capture_start + #basename - 1,
+        token = "filename",
+    })
+    return capture_start
+end
+
+local function highlight_query(path, query, highlights)
+    if type(query) ~= "string" or #query == 0 then
+        return {
+            matched = false,
+            first = math.huge,
+            match_count = 0,
+            total_span = 0,
+        }
+    end
+
+    local lower_path = path:lower()
+    local lower_query = query:lower()
+    local start_index = 1
+    local first_match = nil
+    local match_count = 0
+    local total_span = 0
+
+    while true do
+        local s, e = lower_path:find(lower_query, start_index, true)
+        if not s then
+            break
+        end
+        table.insert(highlights, {
+            start = s - 1,
+            stop = e,
+            token = "match",
+        })
+        if not first_match or s < first_match then
+            first_match = s
+        end
+        match_count = match_count + 1
+        total_span = total_span + (e - s + 1)
+        start_index = s + 1
+    end
+
+    if not first_match then
+        return {
+            matched = false,
+            first = math.huge,
+            match_count = 0,
+            total_span = 0,
+        }
+    end
 
     return {
+        matched = true,
+        first = first_match,
+        match_count = match_count,
+        total_span = total_span,
+    }
+end
+
+local function compute_score(path, query_meta, basename_start)
+    local match_start = query_meta.first or math.huge
+    local basename_hit = false
+    if query_meta.matched and basename_start then
+        basename_hit = match_start >= basename_start
+    end
+
+    return {
+        matched = query_meta.matched,
+        match_start = match_start,
+        match_count = query_meta.match_count or 0,
+        total_span = query_meta.total_span or 0,
+        basename_hit = basename_hit,
+        path_length = #path,
+    }
+end
+
+local function sort_highlights(highlights)
+    table.sort(highlights, function(a, b)
+        if a.start == b.start then
+            return (a.stop or 0) < (b.stop or 0)
+        end
+        return (a.start or 0) < (b.start or 0)
+    end)
+end
+
+local function compare_decorated(a, b)
+    local sa = a.score or {}
+    local sb = b.score or {}
+
+    if sa.matched ~= sb.matched then
+        return sa.matched and not sb.matched
+    end
+
+    if sa.basename_hit ~= sb.basename_hit then
+        return sa.basename_hit and not sb.basename_hit
+    end
+
+    if (sa.match_start or math.huge) ~= (sb.match_start or math.huge) then
+        return (sa.match_start or math.huge) < (sb.match_start or math.huge)
+    end
+
+    if (sa.total_span or 0) ~= (sb.total_span or 0) then
+        return (sa.total_span or 0) > (sb.total_span or 0)
+    end
+
+    if (sa.match_count or 0) ~= (sb.match_count or 0) then
+        return (sa.match_count or 0) > (sb.match_count or 0)
+    end
+
+    if (sa.path_length or math.huge) ~= (sb.path_length or math.huge) then
+        return (sa.path_length or math.huge) < (sb.path_length or math.huge)
+    end
+
+    return (a.path or "") < (b.path or "")
+end
+
+local function decorate_items(items, query)
+    local results = {}
+    for _, entry in ipairs(items) do
+        local normalized = normalize_entry(entry)
+        if normalized and normalized.path then
+            local highlights = {}
+            local basename_start = highlight_basename(normalized.path, highlights)
+            local query_meta = highlight_query(normalized.path, query or "", highlights)
+            sort_highlights(highlights)
+            table.insert(results, {
+                path = normalized.path,
+                highlights = highlights,
+                score = compute_score(normalized.path, query_meta, basename_start),
+            })
+        end
+    end
+    table.sort(results, compare_decorated)
+    return results
+end
+
+local function filter_items(items, query)
+    if type(query) ~= "string" or #query == 0 then
+        return items
+    end
+
+    local filtered = {}
+    local lowered = query:lower()
+    for _, entry in ipairs(items) do
+        local candidate = entry
+        if type(entry) == "table" and entry.path then
+            candidate = entry.path
+        end
+
+        if type(candidate) == "string" and candidate:lower():find(lowered, 1, true) then
+            table.insert(filtered, entry)
+        end
+    end
+    return filtered
+end
+
+local function serialize_decorated(entries)
+    local lines = {}
+    for _, entry in ipairs(entries) do
+        local segments = {}
+        for _, hl in ipairs(entry.highlights or {}) do
+            local start_byte = tonumber(hl.start) or 0
+            local stop_byte = tonumber(hl.stop) or start_byte
+            local token = hl.token or "match"
+            table.insert(segments, string.format("%d:%d:%s", start_byte, stop_byte, token))
+        end
+        table.insert(lines, string.format("%s\t%s", entry.path, table.concat(segments, ";")))
+    end
+
+    return table.concat(lines, "\n")
+end
+
+local function load_index(cwd)
+    local response = bridge.fuzzy_find(cwd)
+    local items = extract_items(response)
+    log("indexed " .. tostring(#items) .. " entries from " .. cwd)
+    return {
+        cwd = cwd,
         raw = response,
         items = items,
+        filtered = items,
+        decorated = decorate_items(items, ""),
+        query = "",
     }
+end
+
+local function ensure_index(opts)
+    opts = opts or {}
+    local cwd = opts.cwd or plugin.state.results.cwd or "."
+    if not plugin.state.results.raw or cwd ~= plugin.state.results.cwd then
+        plugin.state.results = load_index(cwd)
+    end
+    return plugin.state.results.items
+end
+
+local function ensure_decorated(items, query)
+    local filtered = filter_items(items, query)
+    plugin.state.results.query = query or ""
+    plugin.state.results.filtered = filtered
+    plugin.state.results.decorated = decorate_items(filtered, query)
+    return plugin.state.results.decorated
+end
+
+local function map_to_paths(entries)
+    local paths = {}
+    for _, entry in ipairs(entries) do
+        if type(entry) == "table" and entry.path then
+            table.insert(paths, entry.path)
+        elseif type(entry) == "string" then
+            table.insert(paths, entry)
+        end
+    end
+    return paths
 end
 
 function plugin.setup(opts)
@@ -47,40 +272,30 @@ function plugin.setup(opts)
 
     plugin.state.initialized = true
     plugin.state.options = opts or {}
-
-    plugin.state.results = refresh_index(plugin.state.options)
+    plugin.state.results = load_index(plugin.state.options.cwd or ".")
 
     return plugin
 end
 
-function plugin.find_files()
-    plugin.state.results = refresh_index(plugin.state.options)
-    return plugin.state.results.items
+function plugin.find_files(opts)
+    opts = opts or {}
+    local items = ensure_index(opts)
+    local decorated = ensure_decorated(items, opts.query or "")
+    return map_to_paths(decorated)
+end
+
+function plugin.render_listing(opts)
+    opts = opts or {}
+    local items = ensure_index(opts)
+    local decorated = ensure_decorated(items, opts.query or "")
+    return serialize_decorated(decorated)
 end
 
 function plugin.live_grep(query)
     local opts = plugin.state.options or {}
-    local cwd = opts.cwd or "."
-
-    local response = bridge.fuzzy_find(cwd)
-    local items = extract_items(response)
-
-    if query and type(query) == "string" and #query > 0 then
-        local filtered = {}
-        for _, entry in ipairs(items) do
-            local candidate = entry
-            if type(entry) == "table" and entry.path then
-                candidate = entry.path
-            end
-
-            if type(candidate) == "string" and candidate:lower():find(query:lower(), 1, true) then
-                table.insert(filtered, entry)
-            end
-        end
-        return filtered
-    end
-
-    return items
+    ensure_index(opts)
+    ensure_decorated(plugin.state.results.items, query or "")
+    return plugin.state.results.filtered
 end
 
 function plugin.buffers()
@@ -91,18 +306,6 @@ function plugin.buffers()
 
     log("serving " .. tostring(#harpoon) .. " harpoon buffers")
     return harpoon
-end
-
-return plugin.setup()
-    log("find_files placeholder")
-end
-
-function plugin.grep()
-    log("grep placeholder")
-end
-
-function plugin.buffers()
-    log("buffers placeholder")
 end
 
 return plugin.setup()

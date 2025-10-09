@@ -4,6 +4,7 @@ zig-out/
 *.exe
 CLAUDE.md
 TODO.md
+ZAP_AI_TODO.md
 DEVELOPMENT_ROADMAP.md
 archive/
 cktech/

@@ -37,11 +37,7 @@ pub const PackageRegistry = struct {
         zlog.info("Fetching plugin info for: {s}", .{name});
 
         // TODO: HTTP request to registry
-        const url = try std.fmt.allocPrint(
-            self.allocator,
-            "{s}/plugins/{s}.json",
-            .{self.registry_url, name}
-        );
+        const url = try std.fmt.allocPrint(self.allocator, "{s}/plugins/{s}.json", .{ self.registry_url, name });
         defer self.allocator.free(url);
 
         // TODO: Parse JSON response
@@ -50,7 +46,7 @@ pub const PackageRegistry = struct {
             .name = try self.allocator.dupe(u8, name),
             .version = try self.allocator.dupe(u8, "latest"),
             .description = try self.allocator.dupe(u8, "Plugin description"),
-            .dependencies = std.ArrayList([]const u8).init(self.allocator),
+            .dependencies = std.ArrayList([]const u8).empty,
         };
 
         // Cache the result
@@ -70,7 +66,7 @@ pub const PluginInfo = struct {
         allocator.free(self.name);
         allocator.free(self.version);
         allocator.free(self.description);
-        self.dependencies.deinit();
+        self.dependencies.deinit(allocator);
     }
 
     pub fn clone(self: PluginInfo, allocator: std.mem.Allocator) !PluginInfo {
@@ -78,7 +74,7 @@ pub const PluginInfo = struct {
             .name = try allocator.dupe(u8, self.name),
             .version = try allocator.dupe(u8, self.version),
             .description = try allocator.dupe(u8, self.description),
-            .dependencies = try self.dependencies.clone(),
+            .dependencies = try self.dependencies.clone(allocator),
         };
     }
 };

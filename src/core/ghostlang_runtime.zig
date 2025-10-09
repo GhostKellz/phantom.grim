@@ -95,6 +95,105 @@ pub const GhostlangRuntime = struct {
 
         return try self.engine.call(name, args);
     }
+
+    /// Execute a snippet and duplicate the resulting string (if any).
+    pub fn evalStringDup(self: *GhostlangRuntime, code: []const u8) !?[]u8 {
+        const value = try self.executeCode(code);
+        const string_value = scriptValueToString(value) orelse return null;
+        return try self.allocator.dupe(u8, string_value);
+    }
+
+    /// Retrieve the current statusline text rendered by the Ghostlang plugin layer.
+    pub fn statuslineCurrent(self: *GhostlangRuntime) !?[]u8 {
+        const snippet =
+            "local status = require(\"plugins.core.statusline\")\n" ++
+            "if status and status.refresh then status.refresh({}) end\n" ++
+            "if status and status.current then return status.current() end\n" ++
+            "return nil";
+
+        return try self.evalStringDup(snippet);
+    }
+
+    /// Retrieve a newline-separated listing of the file tree.
+    pub fn fileTreeListing(self: *GhostlangRuntime) !?[]u8 {
+        const snippet =
+            "local tree = require(\"plugins.core.file-tree\")\n" ++
+            "if not tree then return nil end\n" ++
+            "if tree.open then tree.open() end\n" ++
+            "if tree.nodes then\n" ++
+            "  local nodes = tree.nodes()\n" ++
+            "  if type(nodes) == \"table\" and #nodes > 0 then\n" ++
+            "    return table.concat(nodes, \"\\n\")\n" ++
+            "  end\n" ++
+            "end\n" ++
+            "return nil";
+
+        return try self.evalStringDup(snippet);
+    }
+
+    /// Retrieve newline-separated fuzzy finder results (files list).
+    pub fn fuzzyFinderListing(self: *GhostlangRuntime, query: []const u8) !?[]u8 {
+        const escaped_query = try escapeGhostlangString(self.allocator, query);
+        defer self.allocator.free(escaped_query);
+
+        const snippet = try std.mem.concat(self.allocator, u8, &[_][]const u8{
+            "local fuzzy = require(\"plugins.core.fuzzy-finder\")\n",
+            "if not fuzzy then return nil end\n",
+            "local results = fuzzy.find_files({ query = \"",
+            escaped_query,
+            "\" })\n",
+            "if type(results) ~= \"table\" or #results == 0 then return nil end\n",
+            "local lines = {}\n",
+            "for _, entry in ipairs(results) do\n",
+            "  if type(entry) == \"table\" and entry.path then\n",
+            "    table.insert(lines, entry.path)\n",
+            "  elseif type(entry) == \"string\" then\n",
+            "    table.insert(lines, entry)\n",
+            "  end\n",
+            "end\n",
+            "if #lines == 0 then return nil end\n",
+            "return table.concat(lines, \"\\n\")",
+        });
+        defer self.allocator.free(snippet);
+
+        return try self.evalStringDup(snippet);
+    }
+
+    pub fn fuzzyFinderDecoratedListing(self: *GhostlangRuntime, query: []const u8) !?[]u8 {
+        const escaped_query = try escapeGhostlangString(self.allocator, query);
+        defer self.allocator.free(escaped_query);
+
+        const snippet = try std.mem.concat(self.allocator, u8, &[_][]const u8{
+            "local fuzzy = require(\"plugins.core.fuzzy-finder\")\n",
+            "if not fuzzy or not fuzzy.render_listing then return nil end\n",
+            "return fuzzy.render_listing({ query = \"",
+            escaped_query,
+            "\" })",
+        });
+        defer self.allocator.free(snippet);
+
+        return try self.evalStringDup(snippet);
+    }
+
+    /// Retrieve newline-separated highlight entries for a buffer via treesitter plugin.
+    pub fn treesitterHighlightListing(self: *GhostlangRuntime, path: []const u8, content: []const u8) !?[]u8 {
+        const escaped_path = try escapeGhostlangString(self.allocator, path);
+        defer self.allocator.free(escaped_path);
+
+        const escaped_content = try escapeGhostlangString(self.allocator, content);
+        defer self.allocator.free(escaped_content);
+
+        const snippet = try std.fmt.allocPrint(
+            self.allocator,
+            "local tree = require(\"plugins.core.treesitter\")\n" ++
+                "if not tree or not tree.highlight_buffer then return nil end\n" ++
+                "return tree.highlight_buffer({{ path = \"{s}\", content = \"{s}\" }})",
+            .{ escaped_path, escaped_content },
+        );
+        defer self.allocator.free(snippet);
+
+        return try self.evalStringDup(snippet);
+    }
 };
 
 var active_runtime: ?*GhostlangRuntime = null;
@@ -167,6 +266,50 @@ fn moduleNameToRelativePath(allocator: std.mem.Allocator, module_name: []const u
     }
     std.mem.copyForwards(u8, buffer[module_name.len .. module_name.len + suffix.len], suffix);
     return buffer;
+}
+
+fn escapeGhostlangString(allocator: std.mem.Allocator, input: []const u8) ![]u8 {
+    if (input.len == 0) return allocator.alloc(u8, 0);
+
+    const max_len = std.math.mul(usize, input.len, 2) catch return error.OutOfMemory;
+    var buffer = try allocator.alloc(u8, max_len);
+    var index: usize = 0;
+
+    for (input) |byte| {
+        switch (byte) {
+            '"' => {
+                buffer[index] = '\\';
+                buffer[index + 1] = '"';
+                index += 2;
+            },
+            '\\' => {
+                buffer[index] = '\\';
+                buffer[index + 1] = '\\';
+                index += 2;
+            },
+            '\n' => {
+                buffer[index] = '\\';
+                buffer[index + 1] = 'n';
+                index += 2;
+            },
+            '\r' => {
+                buffer[index] = '\\';
+                buffer[index + 1] = 'r';
+                index += 2;
+            },
+            '\t' => {
+                buffer[index] = '\\';
+                buffer[index + 1] = 't';
+                index += 2;
+            },
+            else => {
+                buffer[index] = byte;
+                index += 1;
+            },
+        }
+    }
+
+    return buffer[0..index];
 }
 
 fn resolveModulePath(runtime: *GhostlangRuntime, relative: []const u8) ![]u8 {

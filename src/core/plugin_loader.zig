@@ -2,11 +2,43 @@
 //! Handles plugin loading, fetching, and management
 
 const std = @import("std");
+const Io = std.Io;
 const zsync = @import("zsync");
 const zlog = @import("zlog");
 const zhttp = @import("zhttp");
 const tar = std.tar;
 const GhostlangRuntime = @import("ghostlang_runtime.zig").GhostlangRuntime;
+
+fn appendJsonString(buffer: *std.ArrayList(u8), allocator: std.mem.Allocator, value: []const u8) !void {
+    const hex_digits = "0123456789abcdef";
+    try buffer.append(allocator, '"');
+    for (value) |ch| {
+        switch (ch) {
+            '"' => try buffer.appendSlice(allocator, "\\\""),
+            '\\' => try buffer.appendSlice(allocator, "\\\\"),
+            '\n' => try buffer.appendSlice(allocator, "\\n"),
+            '\r' => try buffer.appendSlice(allocator, "\\r"),
+            '\t' => try buffer.appendSlice(allocator, "\\t"),
+            else => {
+                if (ch < 0x20) {
+                    var buf = [_]u8{ '\\', 'u', '0', '0', 0, 0 };
+                    buf[4] = hex_digits[@as(usize, ch >> 4)];
+                    buf[5] = hex_digits[@as(usize, ch & 0xF)];
+                    try buffer.appendSlice(allocator, buf[0..]);
+                } else {
+                    try buffer.append(allocator, ch);
+                }
+            },
+        }
+    }
+    try buffer.append(allocator, '"');
+}
+
+fn appendUnsigned(buffer: *std.ArrayList(u8), allocator: std.mem.Allocator, value: u64) !void {
+    var buf: [20]u8 = undefined;
+    const str = std.fmt.bufPrint(&buf, "{d}", .{value}) catch unreachable;
+    try buffer.appendSlice(allocator, str);
+}
 
 pub const PluginLoader = struct {
     allocator: std.mem.Allocator,
@@ -71,7 +103,7 @@ pub const PluginLoader = struct {
         defer response.deinit();
 
         if (!response.isSuccess()) {
-            zlog.err("HTTP request failed with status: {}", .{response.status_code});
+            zlog.err("HTTP request failed with status: {}", .{response.status});
             return error.HttpRequestFailed;
         }
 
@@ -79,15 +111,15 @@ pub const PluginLoader = struct {
         const archive_path = try std.fs.path.join(self.allocator, &[_][]const u8{ dest_dir, "plugin.tar.gz" });
         defer self.allocator.free(archive_path);
 
-        var file = try std.fs.cwd().createFile(archive_path, .{});
+        var file = try std.fs.cwd().createFile(archive_path, .{ .truncate = true });
         defer file.close();
 
-        // Get response body as bytes
-        const body = try response.bytes();
+        // Read response body into memory
+        const body = try response.readAll(max_archive_size);
         defer self.allocator.free(body);
 
         // Write to file
-        _ = try file.write(body);
+        try file.writeAll(body);
 
         zlog.info("Downloaded archive to: {s}", .{archive_path});
     }
@@ -102,52 +134,63 @@ pub const PluginLoader = struct {
         var file = try std.fs.cwd().openFile(archive_path, .{});
         defer file.close();
 
-        var buffered_reader = std.io.bufferedReader(file.reader());
-        var gzip_reader = try std.compress.gzip.reader(self.allocator, buffered_reader.reader());
-        defer gzip_reader.deinit();
+        var file_reader_buffer: [8 * 1024]u8 = undefined;
+        var file_reader = file.reader(&file_reader_buffer);
 
-        var tar_reader = try tar.Reader.init(self.allocator, gzip_reader.reader());
-        defer tar_reader.deinit();
+        var gzip_buffer: [std.compress.flate.max_window_len]u8 = undefined;
+        var gzip_stream = std.compress.flate.Decompress.init(&file_reader.interface, .gzip, &gzip_buffer);
+
+        var file_name_buffer: [std.fs.max_path_bytes]u8 = undefined;
+        var link_name_buffer: [std.fs.max_path_bytes]u8 = undefined;
+        var tar_iter: tar.Iterator = .init(&gzip_stream.reader, .{
+            .file_name_buffer = &file_name_buffer,
+            .link_name_buffer = &link_name_buffer,
+            .diagnostics = null,
+        });
 
         var out_dir = try std.fs.cwd().openDir(plugin_dir, .{ .iterate = true, .access_sub_paths = true });
         defer out_dir.close();
 
-        while (try tar_reader.next()) |entry| {
-            const original_name = entry.header.name;
+        var discard_buffer: [256]u8 = undefined;
+
+        while (try tar_iter.next()) |entry| {
+            const original_name = entry.name;
             const name = trimTrailingSeparators(original_name);
+
+            var discarding = Io.Writer.Discarding.init(&discard_buffer);
 
             if (!isSafeRelativePath(name)) {
                 zlog.warn("Skipping unsafe archive path: {s}", .{original_name});
-                _ = try std.io.copyAll(entry.stream, std.io.null_writer);
+                try tar_iter.streamRemaining(entry, &discarding.writer);
                 continue;
             }
 
-            const flag = entry.header.typeflag;
-            if (flag == tar.TypeFlag.directory) {
-                if (name.len == 0) continue;
-                try out_dir.makePath(name);
-                continue;
-            }
+            switch (entry.kind) {
+                .directory => {
+                    if (name.len != 0) {
+                        try out_dir.makePath(name);
+                    }
+                    try tar_iter.streamRemaining(entry, &discarding.writer);
+                },
+                .sym_link => {
+                    zlog.warn("Skipping link entry in plugin archive: {s}", .{name});
+                    try tar_iter.streamRemaining(entry, &discarding.writer);
+                },
+                .file => {
+                    if (std.fs.path.dirname(name)) |parent| {
+                        if (parent.len != 0) {
+                            try out_dir.makePath(parent);
+                        }
+                    }
 
-            if (flag == tar.TypeFlag.symlink or flag == tar.TypeFlag.hardlink) {
-                zlog.warn("Skipping link entry in plugin archive: {s}", .{name});
-                _ = try std.io.copyAll(entry.stream, std.io.null_writer);
-                continue;
-            }
+                    var out_file = try out_dir.createFile(name, .{ .truncate = true });
+                    defer out_file.close();
 
-            if (std.fs.path.dirname(name)) |parent| {
-                if (parent.len != 0) {
-                    try out_dir.makePath(parent);
-                }
-            }
-
-            var out_file = try out_dir.createFile(name, .{ .truncate = true });
-            defer out_file.close();
-
-            const written = try std.io.copyAll(entry.stream, out_file.writer());
-            const expected = entry.header.size;
-            if (written != expected) {
-                zlog.warn("Wrote {d} bytes but expected {d} for {s}", .{ written, expected, name });
+                    var file_buffer: [4 * 1024]u8 = undefined;
+                    var file_writer = out_file.writer(&file_buffer);
+                    try tar_iter.streamRemaining(entry, &file_writer.interface);
+                    try file_writer.interface.flush();
+                },
             }
         }
 
@@ -160,15 +203,13 @@ pub const PluginLoader = struct {
         const manifest_path = try std.fs.path.join(self.allocator, &[_][]const u8{ plugin_path, manifest_file });
         defer self.allocator.free(manifest_path);
 
-        var file = std.fs.cwd().openFile(manifest_path, .{}) catch |err| {
+        const limit = Io.Limit.limited(max_manifest_size);
+        const data = std.fs.cwd().readFileAlloc(manifest_path, self.allocator, limit) catch |err| {
             if (err == error.FileNotFound) {
                 return false;
             }
             return err;
         };
-        defer file.close();
-
-        const data = try file.readToEndAlloc(self.allocator, max_manifest_size);
         defer self.allocator.free(data);
 
         const parsed = try std.json.parseFromSlice(Manifest, self.allocator, data, .{ .ignore_unknown_fields = true });
@@ -184,14 +225,30 @@ pub const PluginLoader = struct {
         const manifest_path = try std.fs.path.join(self.allocator, &[_][]const u8{ plugin_path, manifest_file });
         defer self.allocator.free(manifest_path);
 
+        const now = std.time.timestamp();
+
         const manifest = Manifest{
             .name = name,
             .version = version,
             .registry_url = self.registry_url,
-            .installed_at = std.time.timestamp(),
+            .installed_at = std.math.cast(u64, now) orelse 0,
         };
 
-        const json_text = try std.json.stringifyAlloc(self.allocator, manifest, .{ .whitespace = .indent_2 });
+        var json_buffer = std.ArrayList(u8).empty;
+        defer json_buffer.deinit(self.allocator);
+
+        try json_buffer.append(self.allocator, '{');
+        try json_buffer.appendSlice(self.allocator, "\"name\":");
+        try appendJsonString(&json_buffer, self.allocator, manifest.name);
+        try json_buffer.appendSlice(self.allocator, ",\"version\":");
+        try appendJsonString(&json_buffer, self.allocator, manifest.version);
+        try json_buffer.appendSlice(self.allocator, ",\"registry_url\":");
+        try appendJsonString(&json_buffer, self.allocator, manifest.registry_url);
+        try json_buffer.appendSlice(self.allocator, ",\"installed_at\":");
+        try appendUnsigned(&json_buffer, self.allocator, manifest.installed_at);
+        try json_buffer.append(self.allocator, '}');
+
+        const json_text = try json_buffer.toOwnedSlice(self.allocator);
         defer self.allocator.free(json_text);
 
         var file = try std.fs.cwd().createFile(manifest_path, .{ .truncate = true });
@@ -242,6 +299,7 @@ pub const PluginLoader = struct {
 
     const manifest_file = "manifest.json";
     const max_manifest_size: usize = 64 * 1024;
+    const max_archive_size: usize = 20 * 1024 * 1024;
 
     const Manifest = struct {
         name: []const u8,
@@ -297,7 +355,7 @@ pub const PluginLoader = struct {
         const snippet = try std.fmt.allocPrint(self.allocator, "require(\"{s}\")", .{module_name});
         defer self.allocator.free(snippet);
 
-    _ = try runtime.executeCode(snippet);
+        _ = try runtime.executeCode(snippet);
         zlog.info("Plugin {s} loaded", .{module_name});
     }
 

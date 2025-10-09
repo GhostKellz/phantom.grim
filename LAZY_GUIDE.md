@@ -74,7 +74,8 @@ phantom.grim/
 │   │   ├── file-tree.gza
 │   │   ├── fuzzy-finder.gza
 │   │   ├── statusline.gza
-│   │   └── treesitter.gza
+│   │   ├── treesitter.gza
+│   │   └── zap-ai.gza
 │   ├── editor/                 # Editor enhancements
 │   ├── ui/                     # UI components
 │   └── lang/                   # Language support

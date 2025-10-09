@@ -14,10 +14,17 @@ require("runtime.defaults.keymaps")
 require("runtime.defaults.autocmds")
 
 core.ensure_plugins({
+	"core.plugin-manager",
+	"core.theme",
 	"core.file-tree",
 	"core.fuzzy-finder",
 	"core.statusline",
 	"core.treesitter",
+	"core.zap-ai",
+	"editor.theme-commands",
+	"editor.plugin-commands",
+	"editor.phantom",
+	"extras.health",
 })
 
 local loaded = table.concat(core.loaded_plugins(), ", ")

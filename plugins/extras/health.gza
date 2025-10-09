@@ -1,0 +1,78 @@
+-- plugins/extras/health.gza
+-- Runtime health reporting utilities inspired by LazyVim's :Lazy health command.
+
+local core = require("core")
+local bridge = require("grim.bridge")
+local theme = require("plugins.core.theme")
+
+local plugin = {
+    name = "health",
+    state = {
+        initialized = false,
+        last_snapshot = nil,
+    },
+}
+
+local function log(message)
+    print("[health] " .. message)
+end
+
+local function capture_snapshot()
+    local snapshot = {
+        timestamp = os.time(),
+        plugins = core.loaded_plugins() or {},
+        theme = theme.summary(),
+        zap = {
+            available = bridge.zap and bridge.zap.available and bridge.zap.available() or false,
+        },
+        git = {
+            staged = #(bridge.git_diff_staged() or ""),
+            head = #(bridge.git_diff_head() or ""),
+        },
+    }
+
+    snapshot.plugins_total = #snapshot.plugins
+    return snapshot
+end
+
+function plugin.setup()
+    if plugin.state.initialized then
+        return plugin
+    end
+
+    plugin.state.initialized = true
+    plugin.state.last_snapshot = capture_snapshot()
+    log("initialized")
+    return plugin
+end
+
+function plugin.refresh()
+    plugin.state.last_snapshot = capture_snapshot()
+    return plugin.state.last_snapshot
+end
+
+function plugin.report()
+    local snapshot = plugin.refresh()
+    local lines = {
+        "[phantom.grim] health report",
+        "  plugins loaded  : " .. tostring(snapshot.plugins_total),
+        "  active theme    : " .. tostring((snapshot.theme or {}).current),
+        "  theme catalog   : " .. tostring((snapshot.theme or {}).total or 0) .. " themes",
+        "  zap available   : " .. tostring(snapshot.zap.available),
+        "  git staged bytes: " .. tostring(snapshot.git.staged),
+        "  git head bytes  : " .. tostring(snapshot.git.head),
+    }
+
+    local report = table.concat(lines, "\n")
+    print(report)
+    return report, snapshot
+end
+
+function plugin.snapshot()
+    if not plugin.state.last_snapshot then
+        plugin.refresh()
+    end
+    return plugin.state.last_snapshot
+end
+
+return plugin.setup()
