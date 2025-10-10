@@ -1,0 +1,213 @@
+-- tests/plugin_manager_replay.gza
+-- Regression tests for plugin-manager lazy trigger replay behaviour.
+
+local results = {
+    command_registrations = {},
+    keymap_registrations = {},
+    autocmd_registrations = {},
+    exec_calls = {},
+    feed_calls = {},
+}
+
+command = function(name, fn, opts)
+    results.command_registrations[#results.command_registrations + 1] = {
+        name = name,
+        fn = fn,
+        opts = opts,
+    }
+    return true
+end
+
+map = function(mode, lhs, rhs, desc)
+    results.keymap_registrations[#results.keymap_registrations + 1] = {
+        mode = mode,
+        lhs = lhs,
+        rhs = rhs,
+        desc = desc,
+    }
+    return true
+end
+
+autocmd = function(event, pattern, cmd)
+    results.autocmd_registrations[#results.autocmd_registrations + 1] = {
+        event = event,
+        pattern = pattern,
+        cmd = cmd,
+    }
+    return true
+end
+
+print = function() end
+
+package.preload["core"] = function()
+    local core = {}
+    local loaded = {}
+
+    function core.load_plugin(name)
+        if loaded[name] then
+            return loaded[name]
+        end
+        local loader = package.preload[name]
+        if type(loader) ~= "function" then
+            local stub = { name = name }
+            loaded[name] = stub
+            return stub
+        end
+        local module = loader()
+        loaded[name] = module or true
+        return loaded[name]
+    end
+
+    function core.is_loaded(name)
+        return loaded[name] ~= nil
+    end
+
+    function core.bridge()
+        return {}
+    end
+
+    return core
+end
+
+package.preload["plugins.test.lazy_command"] = function()
+    return { name = "plugins.test.lazy_command" }
+end
+
+package.preload["plugins.test.lazy_key"] = function()
+    return { name = "plugins.test.lazy_key" }
+end
+
+phantom = {
+    exec_command = function(name, ctx)
+        results.exec_calls[#results.exec_calls + 1] = {
+            name = name,
+            ctx = ctx,
+        }
+        return true
+    end,
+    feedkeys = function(lhs, mode, ctx)
+        results.feed_calls[#results.feed_calls + 1] = {
+            lhs = lhs,
+            mode = mode,
+            ctx = ctx,
+        }
+        return true
+    end,
+}
+
+local plugin_manager = require("plugins.core.plugin-manager")
+plugin_manager.state.initialized = false
+plugin_manager.setup({ defaults = {} })
+
+local failures = {}
+
+local function expect(condition, message)
+    if not condition then
+        error(message or "Expectation failed")
+    end
+end
+
+local function expect_eq(actual, expected, message)
+    if actual ~= expected then
+        error(string.format("%s (expected %s, got %s)", message or "Unexpected value", tostring(expected), tostring(actual)))
+    end
+end
+
+local function test(name, fn)
+    local ok, err = pcall(fn)
+    if not ok then
+        failures[#failures + 1] = name .. ": " .. tostring(err)
+    end
+end
+
+test("command trigger replays with phantom.exec_command", function()
+    results.exec_calls = {}
+
+    local descriptor = plugin_manager.register({
+        name = "tests.command_replay",
+        module = "plugins.test.lazy_command",
+        lazy = true,
+        cmd = { "LazyReplayCommand" },
+        config = function()
+            command("LazyReplayCommand", function() end, { desc = "test replay" })
+        end,
+    })
+
+    expect(descriptor ~= nil, "descriptor should register")
+    expect(#descriptor.triggers.commands == 1, "command trigger registered")
+
+    local trigger = descriptor.triggers.commands[1]
+    local ok = plugin_manager.trigger(trigger.identifier, { ctx = { source = "test" } })
+    expect(ok, "trigger should succeed")
+
+    expect(#results.exec_calls == 1, "exec_command invoked once")
+    local call = results.exec_calls[1]
+    expect_eq(call.name, "LazyReplayCommand", "expected command replay name")
+    expect(call.ctx ~= nil, "exec context provided")
+    expect_eq(call.ctx.plugin, "tests.command_replay", "context should include plugin name")
+
+    local status = plugin_manager.status()
+    local match = nil
+    for _, entry in ipairs(status.entries or {}) do
+        if entry.name == "tests.command_replay" then
+            match = entry
+            break
+        end
+    end
+    expect(match ~= nil, "status entry present")
+    expect_eq(match.loads, 1, "command plugin loaded once")
+    expect_eq(match.total_triggers, 1, "command trigger counted")
+end)
+
+test("key trigger feeds through phantom.feedkeys", function()
+    results.feed_calls = {}
+
+    local descriptor = plugin_manager.register({
+        name = "tests.key_replay",
+        module = "plugins.test.lazy_key",
+        lazy = true,
+        keys = {
+            { mode = "n", lhs = "<leader>lr", desc = "lazy key replay" },
+        },
+        config = function()
+            map("n", "<leader>lr", function() end, "lazy key replay")
+        end,
+    })
+
+    expect(descriptor ~= nil, "descriptor should register")
+    expect(#descriptor.triggers.keys == 1, "key trigger registered")
+
+    local trigger = descriptor.triggers.keys[1]
+    local ok = plugin_manager.trigger(trigger.identifier, {})
+    expect(ok, "key trigger should succeed")
+
+    expect(#results.feed_calls == 1, "feedkeys invoked once")
+    local call = results.feed_calls[1]
+    expect_eq(call.lhs, "<leader>lr", "feedkeys called with lhs")
+    expect_eq(call.mode, "n", "feedkeys called with mode")
+
+    local status = plugin_manager.status()
+    local match = nil
+    for _, entry in ipairs(status.entries or {}) do
+        if entry.name == "tests.key_replay" then
+            match = entry
+            break
+        end
+    end
+    expect(match ~= nil, "status entry present")
+    expect_eq(match.loads, 1, "key plugin loaded once")
+    expect_eq(match.total_triggers, 1, "key trigger counted")
+end)
+
+if #failures > 0 then
+    for _, message in ipairs(failures) do
+        print("[FAIL] " .. message)
+    end
+    if os and os.exit then
+        os.exit(1)
+    else
+        error(table.concat(failures, "\n"))
+    end
+else
+    print("[PASS] plugin-manager replay specs")
+end

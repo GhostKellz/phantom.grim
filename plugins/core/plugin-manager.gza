@@ -23,6 +23,7 @@ local plugin = {
         trigger_index = 0,
         metrics = {},
         ensured = false,
+        command_api = false,
     },
 }
 
@@ -116,6 +117,116 @@ local function safe_autocmd(event, pattern, cmd)
         return false
     end
     return true
+end
+
+local function execute_command(name, ctx)
+    if type(name) ~= "string" or #name == 0 then
+        return false
+    end
+
+    local runners = {
+        rawget(_G, "command_exec"),
+        rawget(_G, "command_execute"),
+        rawget(_G, "exec_command"),
+    }
+
+    for _, fn in ipairs(runners) do
+        if type(fn) == "function" then
+            local ok, result = pcall(fn, name, ctx)
+            if ok and result ~= false then
+                return true
+            end
+        end
+    end
+
+    local runtime_bridge = core.bridge and core.bridge()
+    if type(runtime_bridge) == "table" then
+        for _, key in ipairs({ "command_execute", "exec_command", "run_command" }) do
+            local fn = runtime_bridge[key]
+            if type(fn) == "function" then
+                local ok, result = pcall(fn, name, ctx)
+                if ok and result ~= false then
+                    return true
+                end
+            end
+        end
+    end
+
+    return false
+end
+
+local function runtime_command_api()
+    if plugin.state.command_api and plugin.state.command_api ~= false then
+        return plugin.state.command_api
+    end
+
+    local exec_fn = nil
+    local feedkeys_fn = nil
+
+    local phantom_global = rawget(_G, "phantom")
+    if type(phantom_global) == "table" then
+        if type(phantom_global.exec_command) == "function" then
+            exec_fn = phantom_global.exec_command
+        elseif type(phantom_global.command_execute) == "function" then
+            exec_fn = phantom_global.command_execute
+        end
+        if type(phantom_global.feedkeys) == "function" then
+            feedkeys_fn = phantom_global.feedkeys
+        elseif type(phantom_global.send_keys) == "function" then
+            feedkeys_fn = phantom_global.send_keys
+        end
+    end
+
+    local runtime_bridge = core.bridge and core.bridge()
+    if type(runtime_bridge) == "table" then
+        if type(runtime_bridge.command_replay) == "table" then
+            local replay = runtime_bridge.command_replay
+            exec_fn = exec_fn or replay.exec_command or replay.exec or replay.command
+            feedkeys_fn = feedkeys_fn or replay.feedkeys or replay.feed or replay.keys
+        end
+        exec_fn = exec_fn or runtime_bridge.exec_command or runtime_bridge.command_execute or runtime_bridge.command_exec or runtime_bridge.run_command
+        feedkeys_fn = feedkeys_fn or runtime_bridge.feedkeys or runtime_bridge.send_keys or runtime_bridge.replay_keys
+    end
+
+    if type(exec_fn) ~= "function" then
+        exec_fn = nil
+    end
+    if type(feedkeys_fn) ~= "function" then
+        feedkeys_fn = nil
+    end
+
+    if exec_fn or feedkeys_fn then
+        plugin.state.command_api = {
+            exec = exec_fn,
+            feedkeys = feedkeys_fn,
+        }
+    else
+        plugin.state.command_api = false
+    end
+
+    return plugin.state.command_api
+end
+
+local function replay_command(name, ctx)
+    local api = runtime_command_api()
+    if type(api) == "table" and type(api.exec) == "function" and type(name) == "string" and #name > 0 then
+        local ok, result = pcall(api.exec, name, ctx)
+        if ok and result ~= false then
+            return true
+        end
+    end
+    return false
+end
+
+local function replay_keys(lhs, mode, ctx)
+    local api = runtime_command_api()
+    if type(api) == "table" and type(api.feedkeys) == "function" and type(lhs) == "string" and #lhs > 0 then
+        local ok, result = pcall(api.feedkeys, lhs, mode, ctx)
+        if ok and result ~= false then
+            return true
+        end
+    end
+    return false
 end
 
 local function has_triggers(descriptor)
@@ -267,17 +378,37 @@ local function build_descriptor(entry)
 
     local module_name = normalize(entry.module or name)
     local descriptor = {
+    local counts = {
+        total = 0,
+        lazy = 0,
+        eager = 0,
+        loaded = 0,
+        pending = 0,
+    }
         name = name,
         module = module_name,
         enabled = entry.enabled ~= false,
         default = entry.default or false,
         priority = entry.priority or 0,
-        dependencies = dedupe(to_array(entry.dependencies)),
+            state = loaded and "loaded" or "pending",
         init = type(entry.init) == "function" and entry.init or nil,
         config = type(entry.config) == "function" and entry.config or nil,
         lazy = entry.lazy,
         triggers = {
             commands = normalize_commands(entry.cmd or entry.commands),
+        entries[#entries + 1] = entry
+
+        counts.total = counts.total + 1
+        if entry.lazy then
+            counts.lazy = counts.lazy + 1
+        else
+            counts.eager = counts.eager + 1
+        end
+        if loaded then
+            counts.loaded = counts.loaded + 1
+        else
+            counts.pending = counts.pending + 1
+        end
             keys = normalize_keys(entry.keys),
             events = normalize_events(entry.event or entry.events),
             filetypes = normalize_filetypes(entry.ft or entry.filetype or entry.filetypes),
@@ -289,6 +420,7 @@ local function build_descriptor(entry)
         descriptor.lazy = has_triggers(descriptor)
     end
 
+        counts = counts,
     return descriptor
 end
 
@@ -452,14 +584,10 @@ local function finalize_key_triggers(descriptor)
 end
 
 local function dispatch_command(name, ctx)
-    if type(command) ~= "function" then
-        return false
-    end
-    local ok = pcall(command, name, ctx, { execute = true })
-    if ok then
+    if replay_command(name, ctx) then
         return true
     end
-    return false
+    return execute_command(name, ctx)
 end
 
 local function activate_descriptor(descriptor, meta)
@@ -489,15 +617,21 @@ local function activate_descriptor(descriptor, meta)
         return nil
     end
 
+    local duration = os.clock() - start
     descriptor.loaded = true
     descriptor.module_cache = result
-    descriptor.metrics = {
-        trigger_kind = meta and meta.kind or "manual",
-        trigger_source = meta and meta.identifier,
-        triggered_by = meta and meta.ctx,
-        loaded_at = os.time(),
-        duration = os.clock() - start,
-    }
+    descriptor.metrics = descriptor.metrics or {}
+    descriptor.metrics.trigger_counts = descriptor.metrics.trigger_counts or {}
+    descriptor.metrics.loads = (descriptor.metrics.loads or 0) + 1
+    descriptor.metrics.total_triggers = descriptor.metrics.total_triggers or 0
+    descriptor.metrics.trigger_kind = meta and meta.kind or "manual"
+    descriptor.metrics.trigger_source = meta and meta.identifier
+    descriptor.metrics.triggered_by = meta and meta.ctx
+    descriptor.metrics.loaded_at = os.time()
+    descriptor.metrics.duration = duration
+    descriptor.metrics.last_duration = duration
+    descriptor.metrics.total_duration = (descriptor.metrics.total_duration or 0) + duration
+    descriptor.metrics.last_trigger_kind = descriptor.metrics.trigger_kind
     plugin.state.metrics[descriptor.name] = descriptor.metrics
 
     if descriptor.config and not descriptor.config_ran then
@@ -521,6 +655,7 @@ function plugin.setup(opts)
     plugin.state.trigger_index = 0
     plugin.state.metrics = {}
     plugin.state.ensured = false
+    plugin.state.command_api = false
 
     if opts and type(opts.defaults) == "table" then
         plugin.state.defaults = dedupe(opts.defaults)
@@ -596,7 +731,15 @@ local function after_trigger(descriptor, watcher, payload)
         if entry.callback then
             safe_call(entry.callback, payload and payload.ctx, descriptor)
         else
-            local ok = dispatch_command(entry.run or entry.name, payload and payload.ctx)
+            local ctx = payload and payload.ctx
+            if ctx ~= nil and type(ctx) ~= "table" then
+                ctx = { value = ctx }
+            end
+            ctx = ctx or {}
+            ctx.plugin = descriptor.name
+            ctx.identifier = entry.identifier
+            ctx.trigger_kind = kind
+            local ok = dispatch_command(entry.run or entry.name, ctx)
             if not ok then
                 log(string.format("loaded %s via :%s. Re-run command to execute.", descriptor.name, entry.name))
             end
@@ -604,7 +747,22 @@ local function after_trigger(descriptor, watcher, payload)
     elseif kind == "keys" then
         if entry.callback then
             safe_call(entry.callback, payload, descriptor)
-        elseif entry.rhs then
+        else
+            local replay_ctx = {
+                ctx = payload and payload.ctx or nil,
+                mode = entry.mode or "n",
+                identifier = entry.identifier,
+                plugin = descriptor.name,
+            }
+            if replay_keys(entry.lhs, entry.mode or "n", replay_ctx) then
+                return
+            end
+            if entry.rhs then
+                local command_name = entry.rhs:match("^:([^%s<]+)")
+                if command_name and dispatch_command(command_name, payload and payload.ctx) then
+                    return
+                end
+            end
             log(string.format("loaded %s via key %s. Repeat keymap to run action.", descriptor.name, entry.lhs))
         end
     elseif entry and entry.callback then
@@ -634,6 +792,14 @@ function plugin.trigger(identifier, payload)
 
     local result = activate_descriptor(descriptor, meta)
     if result then
+        descriptor.metrics = descriptor.metrics or {}
+        descriptor.metrics.trigger_counts = descriptor.metrics.trigger_counts or {}
+        descriptor.metrics.trigger_counts[watcher.kind] = (descriptor.metrics.trigger_counts[watcher.kind] or 0) + 1
+        descriptor.metrics.total_triggers = (descriptor.metrics.total_triggers or 0) + 1
+        descriptor.metrics.last_trigger_kind = watcher.kind
+        descriptor.metrics.last_trigger_at = os.time()
+        descriptor.metrics.last_trigger_identifier = identifier
+        plugin.state.metrics[descriptor.name] = descriptor.metrics
         after_trigger(descriptor, watcher, payload)
         return true
     end
@@ -698,16 +864,39 @@ end
 
 function plugin.status()
     local entries = {}
+    local counts = {
+        total = 0,
+        lazy = 0,
+        eager = 0,
+        loaded = 0,
+        pending = 0,
+    }
     for name, descriptor in pairs(plugin.state.registry or {}) do
-        entries[#entries + 1] = {
+        local loaded = descriptor_loaded(descriptor)
+        local entry = {
             name = name,
             lazy = descriptor.lazy and true or false,
-            state = descriptor_loaded(descriptor) and "loaded" or "pending",
+            state = loaded and "loaded" or "pending",
             trigger = descriptor.metrics and descriptor.metrics.trigger_kind or nil,
             loaded_at = descriptor.metrics and descriptor.metrics.loaded_at or nil,
             duration = descriptor.metrics and descriptor.metrics.duration or nil,
+            loads = descriptor.metrics and descriptor.metrics.loads or 0,
+            total_triggers = descriptor.metrics and descriptor.metrics.total_triggers or 0,
             priority = descriptor.priority or 0,
         }
+        entries[#entries + 1] = entry
+
+        counts.total = counts.total + 1
+        if entry.lazy then
+            counts.lazy = counts.lazy + 1
+        else
+            counts.eager = counts.eager + 1
+        end
+        if loaded then
+            counts.loaded = counts.loaded + 1
+        else
+            counts.pending = counts.pending + 1
+        end
     end
 
     table.sort(entries, function(a, b)
@@ -719,6 +908,7 @@ function plugin.status()
 
     return {
         ensured = plugin.state.ensured,
+        counts = counts,
         entries = entries,
     }
 end
@@ -741,14 +931,23 @@ function plugin.report()
         "[phantom.grim] plugin status",
         "  ensured : " .. tostring(status.ensured),
         "  entries : " .. tostring(#(status.entries or {})),
+        string.format("  lazy/eager : %d lazy / %d eager", status.counts.lazy or 0, status.counts.eager or 0),
+        string.format("  loaded/pending : %d loaded / %d pending", status.counts.loaded or 0, status.counts.pending or 0),
     }
     for _, entry in ipairs(status.entries or {}) do
         local trigger = entry.trigger and (" [" .. entry.trigger .. "]") or ""
-        table.insert(lines, string.format("    - %-32s %s%s", entry.name, entry.state, trigger))
+        local duration = entry.duration and string.format(" (%.3fs)", entry.duration) or ""
+        local loaded_at = entry.loaded_at and os.date("!%H:%M:%S", entry.loaded_at) or nil
+        local stamp = loaded_at and (" @" .. loaded_at) or ""
+        table.insert(lines, string.format("    - %-32s %s%s%s%s", entry.name, entry.state, trigger, duration, stamp))
     end
     local report = table.concat(lines, "\n")
     print(report)
     return report, status
+end
+
+function plugin.metrics()
+    return plugin.state.metrics or {}
 end
 
 function plugin.commands()

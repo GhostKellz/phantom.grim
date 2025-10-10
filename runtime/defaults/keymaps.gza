@@ -13,4 +13,6 @@ map("n", "<leader>tr", "<cmd>PhantomTSUpdate<CR>", "Refresh Treesitter registry"
 map("n", "gd", "<cmd>lua vim.lsp.buf.definition()<CR>")
 map("n", "gr", "<cmd>lua vim.lsp.buf.references()<CR>")
 map("n", "K", "<cmd>lua vim.lsp.buf.hover()<CR>")
+map("n", "gcc", "<cmd>CommentToggle<CR>", "Toggle comment on current line")
+map("v", "gc", "<cmd>CommentBlock<CR>", "Toggle comment block")
 print("Default keymaps loaded")

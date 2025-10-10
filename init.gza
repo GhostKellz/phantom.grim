@@ -12,6 +12,7 @@ core.init({ verbose = true })
 require("runtime.defaults.options")
 require("runtime.defaults.keymaps")
 require("runtime.defaults.autocmds")
+require("runtime.defaults.plugins")
 
 core.ensure_plugins({
 	"core.plugin-manager",

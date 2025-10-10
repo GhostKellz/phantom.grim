@@ -1,0 +1,11 @@
+local phantom = require("plugins.editor.phantom")
+
+phantom.lazy({
+    name = "editor.comment",
+    event = { "BufReadPost" },
+    cmd = { "CommentToggle", "CommentLine", "CommentBlock" },
+    keys = {
+        { "n", "gcc", ":CommentToggle<CR>", "Toggle comment on current line" },
+        { "v", "gc", ":CommentBlock<CR>", "Toggle selection comment" },
+    },
+})

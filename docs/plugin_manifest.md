@@ -1,6 +1,6 @@
 # Plugin Manifest Reference
 
-_Last updated: 2025-10-08_
+_Last updated: 2025-10-09_
 
 Lazy-loading descriptors let Phantom.grim defer plugin work until the user
 actually needs it. This document describes the manifest fields supported by the
@@ -50,9 +50,11 @@ cmd = {
 - `callback`: optional function invoked immediately after loading.
 - `once`: when `true`, the trigger is removed after the first activation.
 
-> ℹ️ **Execution model:** The stub command ensures the plugin is available. If no
-> callback is provided, the user may need to rerun the command once more; we log a
-> friendly reminder when that happens.
+> ℹ️ **Execution model:** The stub command ensures the plugin is available. With
+> the runtime `CommandReplayAPI` (exposed as `phantom.exec_command()`), the
+> manager automatically replays the triggering command the moment the module
+> finishes loading. Older builds without that API still log a friendly reminder
+> to rerun the command manually.
 
 ### `keys`
 
@@ -69,7 +71,11 @@ keys = {
 
 - `mode` / `[1]`: single mode string (`"n"`, `"v"`, etc.). Defaults to `"n"`.
 - `lhs` / `[2]`: the mapping to register. Required.
-- `rhs` / `[3]`: optional replacement mapping to set after the plugin loads.
+- `rhs` / `[3]`: optional replacement mapping to set after the plugin loads. If it
+    starts with `:` and the runtime supports command execution, the mapped command
+    is replayed immediately after loading.
+- `lhs` values are automatically re-fed through `phantom.feedkeys()` once the
+    descriptor loads, provided the runtime exposes the key replay API.
 - `callback`: function executed immediately after load.
 - `desc`: description forwarded to the runtime.
 - `once`: remove trigger after first activation.
@@ -141,15 +147,23 @@ phantom.setup({
 
 ## Telemetry & Observation
 
-Each descriptor tracks:
+Each descriptor now tracks:
 
-- `trigger_kind`: what caused the load (`cmd`, `keys`, `event`, `ft`, `ensure`, `manual`).
+- `loads`: number of times the plugin has been required (should stay at `1` for
+    standard lazy plugins).
+- `total_triggers`: aggregate trigger hits (commands, keymaps, events, filetypes).
+- `trigger_counts`: per-kind trigger tallies.
+- `trigger_kind`: what caused the current/most recent load (`cmd`, `keys`, `event`, `ft`, `ensure`, `manual`).
 - `trigger_source`: identifier (command name, keymap, event id).
 - `loaded_at`: Unix timestamp at activation.
 - `duration`: time spent requiring the plugin (in seconds).
 
-You can inspect the captured data via `plugin_manager.status()` or the
-`:PhantomPlugins` command.
+Inspect the captured data via `plugin_manager.status()`, the
+`:PhantomPlugins` command (coming soon), or `:PhantomHealth`, which now surfaces
+total lazy loads and trigger hits.
+
+> 🧪 See `tests/plugin_manager_replay.gza` for a lightweight regression suite that
+> verifies the replay hooks and metrics without requiring the full runtime.
 
 ## Gotchas & Best Practices
 

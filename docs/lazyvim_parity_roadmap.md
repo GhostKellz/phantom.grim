@@ -1,6 +1,6 @@
 # LazyVim Parity Focus Roadmap
 
-_Last updated: 2025-10-08_
+_Last updated: 2025-10-09_
 
 This document translates the current "recommended focus areas" into concrete, staged workstreams so Phantom.grim can close the gap with LazyVim. Each section captures:
 
@@ -11,10 +11,10 @@ This document translates the current "recommended focus areas" into concrete, st
 
 ### Execution plan
 
-We will execute roadmap items **1 → 5** sequentially, treating each as a milestone that unlocks the next:
+We will execute roadmap items **1 → 5** sequentially, treating each as a milestone that unlocks the next. Runtime dependencies that block items are tracked in `docs/GRIM_WISHLIST.md`.
 
 1. ✅ **Finish the four core plugins** *(Oct 2025)* – pane UX, pickers, statusline, and Treesitter management are live.
-2. 🚧 **Implement lazy-loading descriptors** *(Oct 2025)* – descriptor registry, triggers, and Phantom DSL landed; polish underway.
+2. ✅ **Implement lazy-loading descriptors** *(Oct 2025)* – descriptor registry, triggers, Phantom DSL, automatic command/key replay, telemetry exports, and regression scaffolding are all live.
 3. **Bring up the Phase 3 plugin set** – deliver the IDE-ready bundle.
 4. **Advance theme UX** – polish daily ergonomics and theme authoring.
 5. **Surface observability tooling** – provide the instrumentation needed for confident rollout.
@@ -51,18 +51,17 @@ Item 6 (docs & onboarding) stays in parallel discovery but will be scheduled onc
 
 **Current status:** `plugin-manager.gza` now stores full descriptors with `cmd`/`keys`/`event`/`ft` triggers, telemetry, and dependency chaining. Stub commands (`:PhantomPluginTrigger`, `:PhantomPluginLoad`) and the `phantom.lazy` helper ship with docs in `docs/plugin_manifest.md`.
 
-**Remaining polish:** automatic re-dispatch for certain commands/keymaps (avoid manual rerun prompts), richer event payloads, and trace exports to health reports.
+**Shipped polish:** automatic replay via the Grim `CommandReplayAPI`, real-time key re-run through `phantom.feedkeys()`, per-plugin load/trigger metrics in `extras.health`, and a regression harness (`tests/plugin_manager_replay.gza`).
 
-**Next actions:**
-1. Teach trigger callbacks to replay command/key actions automatically when the runtime exposes an execution API.
-2. Pipe the recorded metrics into `extras.health` and `:PhantomPlugins` for timing/trigger breakdowns.
-3. Stress-test descriptors with the upcoming Phase 3 plugin set and add regression fixtures.
-
-**Dependencies:** coordination with runtime command/keymap execution APIs for seamless replay; hook health reporting once telemetry schema settles.
+**Next actions:** validate the telemetry once more Phase 3 plugins land and fold the data into the upcoming `:PhantomPlugins` UI.
 
 ---
 
 ## 3. Bring Up Phase 3 Plugin Set
+
+**Current status:** Milestone plan documented in `docs/milestone3_plugin_plan.md`. `editor.comment` is live with lazy descriptors, default keymaps (`gcc`, `gc`), and fallback buffer handling while we wait for editor-side APIs.
+
+**Dependencies:** P0 runtime asks (buffer edit API, command replay hooks) are captured in `docs/GRIM_WISHLIST.md`. We should land them before widening coverage so autopairs/surround can avoid brittle scratch adapters.
 
 Target parity plugins (per `FUTURE_GRIM_PHANTOM_GUIDE.md`, §3.1–3.3):
 
@@ -71,10 +70,11 @@ Target parity plugins (per `FUTURE_GRIM_PHANTOM_GUIDE.md`, §3.1–3.3):
 - **Git & utils:** confirm `git-signs`/diagnostics exist or create equivalents.
 
 **Next actions:**
-1. Draft spec sheets for each plugin (behaviour, default keymaps, dependencies).
-2. Stand up `plugins/editor/` modules incrementally, reusing existing Zig helpers where possible.
-3. For `lsp.gza`, expose install/start/attach helpers wrapping existing Zig LSP client.
-4. Add integration tests via Ghostlang harness for critical flows (e.g., comment toggling, autopairs).
+1. Implement `editor.autopairs` and `editor.surround` using the same descriptor infrastructure; share common text mutation helpers once the buffer edit APIs from the wishlist land.
+2. Wire indent guide and colorizer plugins, emitting telemetry to the health report and adding load counters per plugin.
+3. Stand up `plugins/editor/lsp.gza` as the orchestrator for Ghostls/ZLS/RA with language-specific descriptors.
+4. Add Ghostlang regression tests for comment/autopairs/surround toggles as soon as the headless buffer harness is available (see wishlist) or via interim mock adapters.
+5. Extend `extras.health` to surface per-plugin load counts and timings once two or more Phase 3 modules ship.
 
 **Risks:** Need ergonomic API surface from Zig runtime; ensure plugin manager can express load ordering and dependencies.
 
