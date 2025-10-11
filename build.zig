@@ -189,12 +189,38 @@ pub fn build(b: *std.Build) void {
     // A run step that will run the second test executable.
     const run_exe_tests = b.addRunArtifact(exe_tests);
 
+    // Support module for test harness wrapper
+    const test_support_mod = b.addModule("support", .{
+        .root_source_file = b.path("tests/support/test_harness.zig"),
+        .target = target,
+        .imports = &.{
+            .{ .name = "grim", .module = grim_dep.module("grim") },
+        },
+    });
+
+    const comment_test_module = b.createModule(.{
+        .root_source_file = b.path("tests/comment_plugin_test.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "phantom_grim", .module = mod },
+            .{ .name = "ghostlang", .module = ghostlang_dep.module("ghostlang") },
+            .{ .name = "grim", .module = grim_dep.module("grim") },
+            .{ .name = "support", .module = test_support_mod },
+        },
+    });
+    const comment_plugin_tests = b.addTest(.{
+        .root_module = comment_test_module,
+    });
+    const run_comment_plugin_tests = b.addRunArtifact(comment_plugin_tests);
+
     // A top level step for running all tests. dependOn can be called multiple
     // times and since the two run steps do not depend on one another, this will
     // make the two of them run in parallel.
     const test_step = b.step("test", "Run tests");
     test_step.dependOn(&run_mod_tests.step);
     test_step.dependOn(&run_exe_tests.step);
+    test_step.dependOn(&run_comment_plugin_tests.step);
 
     // Just like flags, top level steps are also listed in the `--help` menu.
     //
