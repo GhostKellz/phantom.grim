@@ -46,11 +46,11 @@
         },
         .ghostlang = .{
             .url = "https://github.com/ghostkellz/ghostlang/archive/main.tar.gz",
-            .hash = "ghostlang-0.1.0-_SzSPTmiBQDNBVoKrlD3968nr64-NeIhF0MdXxAWMHNr",
+            .hash = "ghostlang-0.1.2-_SzSPUeIBQCl0nmEmwYFvM61fyAA2AITvCBRJBXbtTc7",
         },
         .grove = .{
             .url = "https://github.com/ghostkellz/grove/archive/main.tar.gz",
-            .hash = "grove-0.1.1-rGFsN_LL5QTSh6NUKSduuTenktQupUhyGhf6TDJDQhs3",
+            .hash = "grove-0.1.1-rGFsN-7i5QRbQ9rp3VYzTUg5ReKWu9c3MCCMqTmwVWu6",
         },
         .zlog = .{
             .url = "https://github.com/ghostkellz/zlog/archive/main.tar.gz",
@@ -74,7 +74,7 @@
         },
         .grim = .{
             .url = "https://github.com/ghostkellz/grim/archive/refs/heads/main.tar.gz",
-            .hash = "grim-0.0.0-BbxsAcvPDQA2q5etvZd8olqukrq_pKJ1Rob5hZfnwR9C",
+            .hash = "grim-0.0.0-BbxsAdBSFQA4vZPKuAjHGvBhY7NBgLErZA8hMHplyXIx",
         },
     },
     .paths = .{
