@@ -1,754 +1,1003 @@
-# Phantom.Grim Development TODO
+# Phantom.Grim: The Next-Gen LazyVim for Grim Editor
 
-## Overview
+**Vision:** Transform phantom.grim into the definitive plugin framework for Grim - a LazyVim-inspired, batteries-included configuration system with native performance.
 
-Phantom.Grim is the next evolution of the grim editor, leveraging:
-- **PhantomTUI v0.5.0** for high-performance text rendering
-- **PhantomBuffer** for native undo/redo, multi-cursor, and diagnostic support
-- **grim runtime** for plugin system and test harness
-- **ghostls v0.3.0** for comprehensive LSP integration
-
-This document outlines the development roadmap for building phantom.grim on top of the grim foundation.
+**Current Status:** ✅ Grim integration complete - TestHarness available - Build passing
+**Next Phase:** Plugin system enhancement and LazyVim feature parity
 
 ---
 
-## Phase 1: Dependency Setup & Test Harness Integration
+## Table of Contents
 
-### 1.1 Add grim as a Dependency
+1. [Project State Assessment](#project-state-assessment)
+2. [Grim Integration Status](#grim-integration-status)
+3. [Core Architecture Tasks](#core-architecture-tasks)
+4. [Plugin System Enhancement](#plugin-system-enhancement)
+5. [LazyVim Feature Parity](#lazyvim-feature-parity)
+6. [Testing Strategy](#testing-strategy)
+7. [Documentation & Polish](#documentation--polish)
+8. [Implementation Timeline](#implementation-timeline)
 
-**Goal:** Import grim's TestHarness module for comprehensive plugin testing.
+---
+
+## Project State Assessment
+
+### ✅ What We Have
+
+**Build System:**
+- ✅ Zig 0.16 build working
+- ✅ Grim dependency via `zig fetch` (not vendored)
+- ✅ TestHarness module exported from grim
+- ✅ All dependency hashes resolved
+
+**Core Infrastructure:**
+```
+phantom.grim/
+├── src/
+│   ├── main.zig                    # ✅ Entry point with ConfigManager
+│   └── core/
+│       ├── config_manager.zig      # ✅ TOML/GZA config parsing
+│       ├── syntax_highlighter.zig  # ✅ Tree-sitter integration
+│       ├── plugin_loader.zig       # ✅ Plugin fetching/loading
+│       ├── package_registry.zig    # ✅ Package management
+│       └── ghostlang_runtime.zig   # ✅ Ghostlang execution
+├── plugins/
+│   ├── core/                       # ✅ 7 core plugins (placeholders)
+│   ├── editor/                     # ✅ 5 editor plugins (partial)
+│   ├── lsp/                        # ⬜ LSP plugins (empty)
+│   └── git/                        # ⬜ Git plugins (empty)
+└── runtime/
+    ├── defaults/                   # ✅ Default configs
+    └── lib/                        # ✅ Runtime libraries
+```
+
+**Existing Plugins:**
+- ✅ `plugins/core/file-tree.gza` (placeholder)
+- ✅ `plugins/core/fuzzy-finder.gza` (placeholder)
+- ✅ `plugins/core/statusline.gza` (placeholder)
+- ✅ `plugins/core/treesitter.gza` (placeholder)
+- ✅ `plugins/core/zap-ai.gza` (placeholder)
+- ✅ `plugins/core/theme.gza` (placeholder)
+- ✅ `plugins/core/plugin-manager.gza` (placeholder)
+- ⚠️ `plugins/editor/comment.gza` (partial - needs TestHarness tests)
+- ⚠️ `plugins/editor/autopairs.gza` (partial - needs TestHarness tests)
+
+### ⬜ What We Need
+
+**Critical Missing Pieces:**
+1. **Grim Runtime Integration** - Plugins don't actually use grim's runtime yet
+2. **Lazy Loading System** - No event-based plugin loading
+3. **Dependency Resolution** - No topological sort for plugin dependencies
+4. **Plugin Testing** - No automated tests using grim's TestHarness
+5. **User-Facing API** - No clean `init.gza` for users to configure
+
+---
+
+## Grim Integration Status
+
+### Available from Grim (via `zig fetch`)
+
+| Module | Import Name | Status | Usage |
+|--------|-------------|--------|-------|
+| TestHarness | `test_harness` | ✅ Available | Not yet used in tests |
+| Runtime | `grim` → runtime | ✅ Available | Not integrated |
+| Core | `grim` → core | ✅ Available | Not integrated |
+| LSP | `grim` → lsp | ✅ Available | Not integrated |
+| Syntax | `grim` → syntax | ✅ Available | Not integrated |
+| UI-TUI | `grim` → ui_tui | ✅ Available | Not integrated |
+
+### Integration Tasks
+
+#### Task 1: Wire Grim Runtime to Plugin Loader
+
+**Goal:** Make phantom.grim plugins execute through grim's runtime instead of standalone.
+
+**Files to modify:**
+- `src/core/plugin_loader.zig`
+- `src/core/ghostlang_runtime.zig`
 
 **Implementation:**
-
-```bash
-cd /data/projects/phantom.grim
-zig fetch --save https://github.com/ghostkellz/grim/archive/refs/heads/main.tar.gz
-```
-
-This will update `build.zig.zon` with a grim dependency entry.
-
-**Alternative (Local Development):**
-
-For faster iteration during development, add grim as a local path dependency in `build.zig.zon`:
-
 ```zig
-.dependencies = .{
-    .grim = .{
-        .path = "../grim",
-    },
-    // ... other dependencies
-},
-```
+// src/core/plugin_loader.zig
+const grim = @import("grim");
+const Runtime = grim.runtime.Runtime;
 
-Then in `build.zig`, **enable test harness export** and use the module:
+pub const PluginLoader = struct {
+    grim_runtime: *Runtime,  // ← Use grim's runtime
 
-```zig
-const grim = b.dependency("grim", .{
-    .target = target,
-    .optimize = optimize,
-    .@"export-test-harness" = true, // ⭐ IMPORTANT: Enable test harness export
-});
-
-// Use the test_harness module directly
-const test_harness_mod = grim.module("test_harness");
-
-// Add to your test executable or module
-const your_tests = b.addTest(.{
-    .root_module = b.createModule(.{
-        .root_source_file = b.path("tests/your_test.zig"),
-        .target = target,
-        .optimize = optimize,
-        .imports = &.{
-            .{ .name = "test_harness", .module = test_harness_mod },
-        },
-    }),
-});
-
-// Optional: If you also need other grim modules
-// exe.root_module.addImport("grim_runtime", grim.module("runtime"));
-// exe.root_module.addImport("grim_core", grim.module("core"));
-// exe.root_module.addImport("grim_lsp", grim.module("lsp"));
-// exe.root_module.addImport("grim_syntax", grim.module("syntax"));
-```
-
-**📚 See Also:** `/data/projects/grim/docs/TEST_HARNESS_USAGE.md` for complete integration guide.
-
-### 1.2 Create Test Infrastructure
-
-**File:** `tests/phantom_test_helpers.zig`
-
-```zig
-const std = @import("std");
-const TestHarness = @import("test_harness").TestHarness; // From grim dependency
-
-pub const TestCase = TestHarness.TestCase;
-
-/// Phantom.Grim-specific test helpers
-pub const PhantomTestHelpers = struct {
-    harness: *TestHarness,
-
-    pub fn init(allocator: std.mem.Allocator) !PhantomTestHelpers {
-        const harness = try TestHarness.init(allocator);
-        return .{ .harness = harness };
+    pub fn init(allocator: std.mem.Allocator) !*PluginLoader {
+        const runtime = try Runtime.init(allocator);
+        return .{ .grim_runtime = runtime };
     }
 
-    pub fn deinit(self: *PhantomTestHelpers) void {
-        self.harness.deinit();
-    }
-
-    /// Load phantom.grim config
-    pub fn loadPhantomConfig(self: *PhantomTestHelpers) !void {
-        try self.harness.execCommand(":set phantom_mode true");
-        try self.harness.execCommand(":set nerd_fonts true");
-    }
-
-    /// Create buffer with PhantomBuffer backend
-    pub fn createPhantomBuffer(self: *PhantomTestHelpers, name: []const u8) !u32 {
-        const buffer_id = try self.harness.createBuffer(name);
-        // Enable PhantomBuffer features
-        try self.harness.execCommand(":buffer_type phantom");
-        return buffer_id;
-    }
-
-    /// Test undo/redo (PhantomBuffer feature)
-    pub fn testUndo(self: *PhantomTestHelpers) !void {
-        try self.harness.sendKeys("i");
-        try self.harness.sendKeys("hello");
-        try self.harness.sendKeys("\x1b"); // ESC
-        try self.harness.assertBufferContent("hello");
-
-        try self.harness.sendKeys("u"); // Undo
-        try self.harness.assertBufferContent("");
+    pub fn loadPlugin(self: *PluginLoader, path: []const u8) !void {
+        // Use grim runtime instead of custom loader
+        try self.grim_runtime.loadModule(path);
     }
 };
 ```
 
-### 1.3 Create Plugin Test Template
-
-**File:** `tests/plugin_test_template.zig`
-
-```zig
-const std = @import("std");
-const TestHarness = @import("test_harness").TestHarness; // From grim dependency
-
-test "phantom.grim plugin: example" {
-    const allocator = std.testing.allocator;
-
-    var harness = try TestHarness.init(allocator);
-    defer harness.deinit();
-
-    // Create buffer
-    _ = try harness.createBuffer("test.zig");
-
-    // Load plugin
-    try harness.execCommand(":PluginLoad phantom_autopair");
-
-    // Test plugin behavior
-    try harness.sendKeys("i");
-    try harness.sendKeys("(");
-    try harness.assertBufferContent("()");
-
-    // Cursor should be between parens
-    try harness.assertCursorPosition(0, 1);
-}
-```
+**Success Criteria:**
+- [ ] Plugins execute through grim's runtime
+- [ ] Grim's plugin API available to phantom plugins
+- [ ] No duplicate runtime code
 
 ---
 
-## Phase 2: PhantomBuffer Integration
+#### Task 2: Integrate Grim's LSP Client
 
-### 2.1 Create PhantomBufferManager
+**Goal:** Make LSP functionality available to phantom.grim plugins.
 
-**File:** `src/phantom_buffer_manager.zig`
+**Files to create:**
+- `src/core/lsp_manager.zig`
 
-Based on `/data/projects/grim/PHANTOMBUFFER.md`, implement the PhantomBufferManager:
-
+**Implementation:**
 ```zig
-const std = @import("std");
-const PhantomBuffer = @import("phantom_buffer.zig").PhantomBuffer;
+const grim = @import("grim");
+const LSPClient = grim.lsp.Client;
 
-pub const PhantomBufferManager = struct {
-    allocator: std.mem.Allocator,
-    buffers: std.ArrayList(ManagedBuffer),
-    active_buffer_id: u32 = 0,
-    next_buffer_id: u32 = 1,
+pub const LSPManager = struct {
+    clients: std.StringHashMap(*LSPClient),
 
-    pub const ManagedBuffer = struct {
-        id: u32,
-        phantom_buffer: PhantomBuffer,
-        display_name: []const u8,
-        last_accessed: i64,
-    };
-
-    pub fn init(allocator: std.mem.Allocator) !PhantomBufferManager {
-        // Create initial phantom buffer
-        var buffers = std.ArrayList(ManagedBuffer).init(allocator);
-        const initial = try PhantomBuffer.init(allocator, 0, .{});
-
-        try buffers.append(.{
-            .id = 0,
-            .phantom_buffer = initial,
-            .display_name = try std.fmt.allocPrint(allocator, "[No Name]", .{}),
-            .last_accessed = std.time.timestamp(),
-        });
-
-        return .{
-            .allocator = allocator,
-            .buffers = buffers,
-        };
+    pub fn setupServer(
+        self: *LSPManager,
+        language: []const u8,
+        server_name: []const u8,
+    ) !*LSPClient {
+        var client = try LSPClient.init(self.allocator, server_name);
+        try client.start();
+        try client.sendInitialize();
+        try self.clients.put(language, client);
+        return client;
     }
-
-    // Implement same API as grim's BufferManager
-    pub fn getActiveBuffer(self: *PhantomBufferManager) ?*ManagedBuffer { ... }
-    pub fn createBuffer(self: *PhantomBufferManager) !u32 { ... }
-    pub fn openFile(self: *PhantomBufferManager, path: []const u8) !u32 { ... }
-    pub fn saveActiveBuffer(self: *PhantomBufferManager) !void { ... }
-    pub fn closeBuffer(self: *PhantomBufferManager, buffer_id: u32) !void { ... }
-    pub fn nextBuffer(self: *PhantomBufferManager) void { ... }
-    pub fn previousBuffer(self: *PhantomBufferManager) void { ... }
-
-    pub fn deinit(self: *PhantomBufferManager) void { ... }
 };
 ```
 
-### 2.2 Implement PhantomTUI (Wrapper around grim's SimpleTUI)
+**Plugins to update:**
+- `plugins/lsp/lsp-config.gza` (new)
+- `plugins/lsp/zig.gza` (new - auto zls)
+- `plugins/lsp/rust.gza` (new - auto rust-analyzer)
 
-**File:** `src/phantom_tui.zig`
+**Success Criteria:**
+- [ ] LSP servers start automatically for filetypes
+- [ ] Completion, hover, definition work
+- [ ] Diagnostics displayed in editor
 
+---
+
+#### Task 3: Integrate Grim's Syntax Highlighting
+
+**Goal:** Use grim's grove (tree-sitter) for syntax highlighting instead of custom.
+
+**Files to modify:**
+- `src/core/syntax_highlighter.zig`
+
+**Implementation:**
 ```zig
-const std = @import("std");
-const grim_tui = @import("grim_ui_tui");
-const PhantomBufferManager = @import("phantom_buffer_manager.zig").PhantomBufferManager;
-const FontManager = @import("grim_ui_tui").FontManager;
+const grim = @import("grim");
+const Parser = grim.syntax.Parser;
+
+pub const SyntaxHighlighter = struct {
+    parser: *Parser,
+
+    pub fn getHighlights(self: *SyntaxHighlighter, language: []const u8, code: []const u8) ![]Highlight {
+        // Use grim's parser instead of custom
+        var parser = try Parser.init(self.allocator, language);
+        defer parser.deinit();
+
+        const tree = try parser.parse(code);
+        defer tree.deinit();
+
+        return try parser.getHighlights(tree);
+    }
+};
+```
+
+**Success Criteria:**
+- [ ] All syntax highlighting uses grim's grove
+- [ ] Support for 14+ languages (zig, rust, ghostlang, etc.)
+- [ ] No duplicate tree-sitter bindings
+
+---
+
+#### Task 4: Integrate Grim's UI-TUI
+
+**Goal:** Render phantom.grim UI using grim's SimpleTUI instead of custom rendering.
+
+**Files to create:**
+- `src/ui/phantom_tui.zig`
+
+**Implementation:**
+```zig
+const grim = @import("grim");
+const SimpleTUI = grim.ui_tui.SimpleTUI;
 
 pub const PhantomTUI = struct {
-    allocator: std.mem.Allocator,
-    buffer_manager: PhantomBufferManager,
-    font_manager: FontManager,
-    running: bool,
+    tui: *SimpleTUI,
+    plugin_loader: *PluginLoader,
 
     pub fn init(allocator: std.mem.Allocator) !*PhantomTUI {
-        const self = try allocator.create(PhantomTUI);
-        self.* = .{
-            .allocator = allocator,
-            .buffer_manager = try PhantomBufferManager.init(allocator),
-            .font_manager = FontManager.init(allocator, true), // Nerd Fonts on
-            .running = true,
-        };
-        return self;
-    }
-
-    pub fn deinit(self: *PhantomTUI) void {
-        self.buffer_manager.deinit();
-        self.font_manager.deinit();
-        self.allocator.destroy(self);
+        const tui = try SimpleTUI.init(allocator);
+        // Configure phantom.grim-specific UI
+        return .{ .tui = tui };
     }
 
     pub fn run(self: *PhantomTUI) !void {
-        // Main render loop using PhantomBuffer
-        while (self.running) {
-            try self.render();
-            try self.handleInput();
+        try self.tui.setupTerminal();
+        while (self.tui.running) {
+            try self.tui.render();
+            try self.tui.handleInput();
         }
-    }
-
-    fn render(self: *PhantomTUI) !void {
-        const buffer = self.buffer_manager.getActiveBuffer() orelse return;
-
-        // Use PhantomBuffer's native rendering
-        if (buffer.phantom_buffer.isUsingPhantom()) {
-            // Direct PhantomTUI rendering (GPU-accelerated)
-            try self.renderPhantomNative(buffer);
-        } else {
-            // Fallback to ANSI terminal rendering
-            try self.renderFallback(buffer);
-        }
-    }
-
-    fn handleInput(self: *PhantomTUI) !void {
-        // Enhanced input handling with PhantomBuffer features
-        const key = try self.readKey();
-
-        switch (key) {
-            'u' => try self.performUndo(),
-            18 => try self.performRedo(), // Ctrl+R
-            // ... other keybindings
-            else => {},
-        }
-    }
-
-    fn performUndo(self: *PhantomTUI) !void {
-        const buffer = self.buffer_manager.getActiveBuffer() orelse return;
-        try buffer.phantom_buffer.undo();
-    }
-
-    fn performRedo(self: *PhantomTUI) !void {
-        const buffer = self.buffer_manager.getActiveBuffer() orelse return;
-        try buffer.phantom_buffer.redo();
     }
 };
 ```
+
+**Success Criteria:**
+- [ ] Full TUI rendering via grim
+- [ ] PhantomBuffer undo/redo working
+- [ ] Multi-cursor support active
+- [ ] Visual block mode functional
 
 ---
 
-## Phase 3: Plugin System Enhancement
+## Core Architecture Tasks
 
-### 3.1 PhantomBuffer Plugin API
+### Task 5: Implement Lazy Loading System
 
-**File:** `src/plugin_api.zig`
+**Goal:** Load plugins on-demand based on events, filetypes, commands, and keymaps (like lazy.nvim).
 
-Extend grim's plugin API with PhantomBuffer-specific capabilities:
+**Files to create:**
+- `src/core/lazy_loader.zig`
+- `src/core/plugin_registry.zig`
 
+**Implementation:**
 ```zig
-const std = @import("std");
-const grim_runtime = @import("grim_runtime");
-const PhantomBuffer = @import("phantom_buffer.zig").PhantomBuffer;
-
-pub const PhantomPluginAPI = struct {
-    base: grim_runtime.PluginAPI,
-
-    /// Get PhantomBuffer instance for active buffer
-    pub fn getPhantomBuffer(self: *PhantomPluginAPI, buffer_id: u32) ?*PhantomBuffer {
-        // Implementation
-    }
-
-    /// Undo last operation
-    pub fn undo(self: *PhantomPluginAPI, buffer_id: u32) !void {
-        const buffer = self.getPhantomBuffer(buffer_id) orelse return error.BufferNotFound;
-        try buffer.undo();
-    }
-
-    /// Redo last undone operation
-    pub fn redo(self: *PhantomPluginAPI, buffer_id: u32) !void {
-        const buffer = self.getPhantomBuffer(buffer_id) orelse return error.BufferNotFound;
-        try buffer.redo();
-    }
-
-    /// Add cursor at position (multi-cursor support)
-    pub fn addCursor(self: *PhantomPluginAPI, buffer_id: u32, line: usize, col: usize) !void {
-        const buffer = self.getPhantomBuffer(buffer_id) orelse return error.BufferNotFound;
-        try buffer.addCursor(.{ .line = line, .column = col, .byte_offset = 0 });
-    }
-
-    /// Clear all secondary cursors
-    pub fn clearCursors(self: *PhantomPluginAPI, buffer_id: u32) !void {
-        const buffer = self.getPhantomBuffer(buffer_id) orelse return error.BufferNotFound;
-        buffer.clearSecondaryCursors();
-    }
-
-    /// Add LSP diagnostic marker
-    pub fn addDiagnostic(
-        self: *PhantomPluginAPI,
-        buffer_id: u32,
-        line: usize,
-        col: usize,
-        severity: PhantomBuffer.DiagnosticSeverity,
-        message: []const u8,
-    ) !void {
-        const buffer = self.getPhantomBuffer(buffer_id) orelse return error.BufferNotFound;
-        try buffer.addDiagnostic(line, col, severity, message);
-    }
-};
-```
-
-### 3.2 Migrate Existing Plugins
-
-Port plugins from grim to use PhantomBuffer features:
-
-**Autopair Plugin (Enhanced):**
-```zig
-// Uses PhantomBuffer's undo/redo for better integration
-pub fn onInsert(api: *PhantomPluginAPI, buffer_id: u32, char: u8) !void {
-    const pairs = .{
-        .{ '(', ')' },
-        .{ '[', ']' },
-        .{ '{', '}' },
-        .{ '"', '"' },
-        .{ '\'', '\'' },
+// src/core/lazy_loader.zig
+pub const LazyLoader = struct {
+    pub const Trigger = union(enum) {
+        event: []const u8,      // "BufRead", "VimEnter"
+        ft: []const u8,         // "zig", "rust"
+        cmd: []const u8,        // "Telescope"
+        keys: []const u8,       // "<leader>f"
     };
 
-    for (pairs) |pair| {
-        if (char == pair[0]) {
-            // Insert closing bracket
-            try api.insertText(buffer_id, &[_]u8{pair[1]});
-            try api.moveCursorLeft(buffer_id);
-            // PhantomBuffer automatically creates undo point
-            break;
+    pub fn registerPlugin(
+        self: *LazyLoader,
+        name: []const u8,
+        triggers: []const Trigger,
+    ) !void {
+        // Map triggers to plugin names
+        for (triggers) |trigger| {
+            switch (trigger) {
+                .event => |e| try self.event_map.put(e, name),
+                .ft => |f| try self.ft_map.put(f, name),
+                .cmd => |c| try self.cmd_map.put(c, name),
+                .keys => |k| try self.keys_map.put(k, name),
+            }
         }
     }
+
+    pub fn triggerEvent(self: *LazyLoader, event: []const u8) !void {
+        if (self.event_map.get(event)) |plugin_name| {
+            try self.loader.loadPlugin(plugin_name);
+        }
+    }
+};
+```
+
+**User-facing API (init.gza):**
+```ghostlang
+-- User's init.gza
+phantom.lazy = {
+  -- Load on event
+  { "file-tree", event = "VimEnter" },
+  { "lsp-config", ft = {"zig", "rust"} },
+
+  -- Load on command
+  { "fuzzy-finder", cmd = "FuzzyFiles" },
+
+  -- Load on keymap
+  { "comment", keys = {"gc", "gcc"} },
 }
 ```
+
+**Success Criteria:**
+- [ ] Plugins load on first trigger only
+- [ ] Dependencies loaded before dependents
+- [ ] Startup time < 50ms with 20+ plugins
+- [ ] `:PhantomProfile` shows load times
 
 ---
 
-## Phase 4: Testing Strategy
+### Task 6: Dependency Resolution with Topological Sort
 
-### 4.1 Unit Tests
+**Goal:** Ensure plugins load in correct order based on dependencies.
 
-**File:** `tests/phantom_buffer_test.zig`
+**Files to modify:**
+- `src/core/plugin_registry.zig`
 
+**Implementation:**
 ```zig
-const std = @import("std");
-const PhantomBuffer = @import("phantom_buffer").PhantomBuffer;
+pub const PluginRegistry = struct {
+    pub fn resolveDependencies(self: *PluginRegistry) !void {
+        var visited = std.StringHashMap(bool).init(self.allocator);
+        defer visited.deinit();
 
-test "PhantomBuffer undo/redo" {
-    const allocator = std.testing.allocator;
+        var stack = std.ArrayList([]const u8).init(self.allocator);
+        defer stack.deinit();
 
-    var buffer = try PhantomBuffer.init(allocator, 1, .{});
-    defer buffer.deinit();
+        // Topological sort
+        var it = self.plugins.iterator();
+        while (it.next()) |entry| {
+            if (!visited.contains(entry.key_ptr.*)) {
+                try self.dfsTopologicalSort(entry.key_ptr.*, &visited, &stack);
+            }
+        }
 
-    // Insert text
-    try buffer.insertText(0, "hello");
-    try std.testing.expectEqualStrings("hello", try buffer.getContent());
+        // Reverse for correct load order
+        self.load_order.clearRetainingCapacity();
+        var i = stack.items.len;
+        while (i > 0) {
+            i -= 1;
+            try self.load_order.append(stack.items[i]);
+        }
+    }
 
-    // Undo
-    try buffer.undo();
-    try std.testing.expectEqualStrings("", try buffer.getContent());
-
-    // Redo
-    try buffer.redo();
-    try std.testing.expectEqualStrings("hello", try buffer.getContent());
-}
-
-test "PhantomBuffer multi-cursor" {
-    const allocator = std.testing.allocator;
-
-    var buffer = try PhantomBuffer.init(allocator, 1, .{});
-    defer buffer.deinit();
-
-    try buffer.insertText(0, "line1\nline2\nline3");
-
-    // Add cursors on each line
-    try buffer.addCursor(.{ .line = 1, .column = 0, .byte_offset = 6 });
-    try buffer.addCursor(.{ .line = 2, .column = 0, .byte_offset = 12 });
-
-    // Test simultaneous editing would go here
-}
-```
-
-### 4.2 Integration Tests using TestHarness
-
-**File:** `tests/integration_test.zig`
-
-```zig
-const std = @import("std");
-const TestHarness = @import("test_harness").TestHarness; // From grim dependency
-
-test "phantom.grim full workflow" {
-    const allocator = std.testing.allocator;
-
-    var harness = try TestHarness.init(allocator);
-    defer harness.deinit();
-
-    // Create buffer
-    _ = try harness.createBuffer("test.zig");
-
-    // Type some code
-    try harness.sendKeys("i");
-    try harness.sendKeys("const std = @import(\"std\");");
-    try harness.sendKeys("\x1b"); // ESC
-
-    // Verify LSP features
-    try harness.assertLSPActive();
-
-    // Test undo
-    try harness.sendKeys("u");
-    try harness.assertBufferContent("");
-
-    // Test redo
-    try harness.sendKeys("\x12"); // Ctrl+R
-    try harness.assertBufferContent("const std = @import(\"std\");");
-
-    // Test multi-cursor (Ctrl+Alt+Down)
-    try harness.sendKeys("j"); // Move down
-    try harness.sendKeys("\x1b[1;7B"); // Ctrl+Alt+Down
-    // ... test multi-cursor editing
-}
-```
-
-### 4.3 Plugin Tests
-
-**File:** `tests/autopair_plugin_test.zig`
-
-Use the TestHarness pattern from `GLANG_TEST_HARNESS.md`:
-
-```zig
-const std = @import("std");
-const TestHarness = @import("test_harness").TestHarness; // From grim dependency
-
-const autopair_tests = [_]TestHarness.TestCase{
-    .{
-        .name = "autopair: insert opening paren",
-        .initial_content = "",
-        .cursor_pos = .{ .line = 0, .col = 0 },
-        .commands = &.{
-            .{ .send_keys = "i" },
-            .{ .send_keys = "(" },
-        },
-        .expected_content = "()",
-        .expected_cursor = .{ .line = 0, .col = 1 },
-    },
-    .{
-        .name = "autopair: skip closing paren",
-        .initial_content = "()",
-        .cursor_pos = .{ .line = 0, .col = 1 },
-        .commands = &.{
-            .{ .send_keys = "i" },
-            .{ .send_keys = ")" },
-        },
-        .expected_content = "()",
-        .expected_cursor = .{ .line = 0, .col = 2 },
-    },
-    // ... more test cases
+    pub fn detectCycles(self: *PluginRegistry) !void {
+        // Cycle detection to prevent deadlock
+    }
 };
+```
 
-test "autopair plugin" {
+**Plugin manifest format (plugin.toml):**
+```toml
+[plugin]
+name = "lsp-config"
+version = "1.0.0"
+
+[dependencies]
+requires = ["cmp-lsp", "nvim-cmp"]
+load_after = ["treesitter"]
+```
+
+**Success Criteria:**
+- [ ] Circular dependencies detected and reported
+- [ ] Plugins load in correct order
+- [ ] `load_after` respected
+- [ ] Missing dependencies error clearly
+
+---
+
+## Plugin System Enhancement
+
+### Task 7: Create User-Facing Configuration API
+
+**Goal:** Provide clean `init.gza` API like lazy.nvim's `lazy.setup()`.
+
+**Files to create:**
+- `runtime/lib/phantom/init.gza`
+- `runtime/lib/phantom/lazy.gza`
+
+**Implementation (init.gza):**
+```ghostlang
+-- runtime/lib/phantom/init.gza
+local phantom = {}
+
+phantom.setup = function(config)
+  config = config or {}
+
+  -- Setup core options
+  if config.options then
+    for key, value in pairs(config.options) do
+      vim.opt[key] = value
+    end
+  end
+
+  -- Setup plugins with lazy loading
+  if config.plugins then
+    require("phantom.lazy").setup(config.plugins)
+  end
+
+  -- Setup theme
+  if config.theme then
+    require("phantom.theme").load(config.theme)
+  end
+
+  -- Setup keymaps
+  if config.keymaps then
+    for mode, mappings in pairs(config.keymaps) do
+      for lhs, rhs in pairs(mappings) do
+        vim.keymap.set(mode, lhs, rhs)
+      end
+    end
+  end
+end
+
+return phantom
+```
+
+**User's init.gza:**
+```ghostlang
+local phantom = require("phantom")
+
+phantom.setup({
+  -- Editor options
+  options = {
+    number = true,
+    relativenumber = true,
+    tabstop = 4,
+    shiftwidth = 4,
+  },
+
+  -- Plugin specifications
+  plugins = {
+    -- Core (always loaded)
+    { "file-tree", lazy = false },
+    { "statusline", lazy = false },
+
+    -- Lazy-loaded
+    { "fuzzy-finder",
+      keys = {
+        { "<leader>f", ":FuzzyFiles<CR>", desc = "Find files" },
+        { "<leader>g", ":LiveGrep<CR>", desc = "Grep" },
+      },
+    },
+    { "lsp-config",
+      ft = { "zig", "rust", "ghostlang" },
+      dependencies = { "cmp-lsp" },
+      config = function()
+        require("lsp-config").setup({
+          servers = { "zls", "rust_analyzer", "ghostls" },
+        })
+      end,
+    },
+    { "treesitter",
+      event = "BufRead",
+      config = function()
+        require("treesitter").setup({
+          ensure_installed = { "zig", "rust", "ghostlang" },
+          highlight = { enable = true },
+        })
+      end,
+    },
+  },
+
+  -- Theme
+  theme = "tokyonight",
+
+  -- Keymaps
+  keymaps = {
+    n = {
+      ["<leader>e"] = ":FileTree<CR>",
+      ["<leader>b"] = ":BufferPicker<CR>",
+    },
+  },
+})
+```
+
+**Success Criteria:**
+- [ ] `phantom.setup()` works like `lazy.setup()`
+- [ ] Plugin specs declarative
+- [ ] Config functions executed after load
+- [ ] Hot reload on config change
+
+---
+
+### Task 8: Port Core Plugins to Use Grim Modules
+
+**Plugins to implement:**
+
+#### 8.1 File Tree Plugin
+
+**File:** `plugins/core/file-tree.gza`
+
+**Use grim modules:**
+- `grim.core.Buffer` for file operations
+- `grim.ui_tui` for rendering
+
+**Features:**
+- Tree rendering with icons
+- Git status indicators (●/+/-/?)
+- Keymaps: `o`/Enter to open, `a` to add, `d` to delete
+- Integration with fuzzy finder
+
+**Tests:** `tests/file_tree_test.zig` using TestHarness
+
+---
+
+#### 8.2 Fuzzy Finder Plugin
+
+**File:** `plugins/core/fuzzy-finder.gza`
+
+**Use grim modules:**
+- `grim.core.fuzzy` for FZF algorithm
+- `grim.ui_tui` for picker UI
+
+**Features:**
+- `:FuzzyFiles` - file picker
+- `:LiveGrep` - ripgrep integration
+- `:Buffers` - buffer picker
+- Score-based sorting (consecutive, word boundary, camelCase)
+
+**Tests:** `tests/fuzzy_finder_test.zig` using TestHarness
+
+---
+
+#### 8.3 LSP Config Plugin
+
+**File:** `plugins/lsp/lsp-config.gza`
+
+**Use grim modules:**
+- `grim.lsp.Client` for LSP communication
+
+**Features:**
+- Auto-start LSP servers by filetype
+- `zls` for Zig
+- `rust-analyzer` for Rust
+- `ghostls` for Ghostlang
+- Completion, hover, definition, diagnostics
+
+**Tests:** `tests/lsp_config_test.zig` using TestHarness
+
+---
+
+#### 8.4 Statusline Plugin
+
+**File:** `plugins/core/statusline.gza`
+
+**Use grim modules:**
+- `grim.core.git` for git info
+- `grim.ui_tui` for rendering
+
+**Format:**
+```
+ NORMAL | main● | buffer.zig | 10,5 | utf-8 | zig
+```
+
+**Components:**
+- Mode (NORMAL/INSERT/VISUAL)
+- Git branch + status
+- Filename
+- Cursor position
+- Encoding
+- Filetype
+
+**Tests:** `tests/statusline_test.zig` using TestHarness
+
+---
+
+#### 8.5 Treesitter Plugin
+
+**File:** `plugins/core/treesitter.gza`
+
+**Use grim modules:**
+- `grim.syntax.Parser` for parsing
+- `grim.syntax.grove` for tree-sitter
+
+**Features:**
+- Auto syntax highlighting
+- Code folding
+- Incremental selection
+- Support: zig, rust, ghostlang, typescript, python, go, c, cpp, lua
+
+**Tests:** `tests/treesitter_test.zig` using TestHarness
+
+---
+
+## LazyVim Feature Parity
+
+### Essential Features from LazyVim
+
+| Feature | LazyVim | Phantom.Grim | Status |
+|---------|---------|--------------|--------|
+| Lazy loading | ✅ | ⬜ | Task 5 |
+| Plugin manager UI | ✅ | ⬜ | Need `:PhantomPlugins` |
+| LSP auto-config | ✅ | ⬜ | Task 8.3 |
+| Treesitter | ✅ | ⬜ | Task 8.5 |
+| Fuzzy finder | ✅ | ⬜ | Task 8.2 |
+| File explorer | ✅ | ⬜ | Task 8.1 |
+| Statusline | ✅ | ⬜ | Task 8.4 |
+| Git integration | ✅ | ⬜ | Use grim.core.git |
+| Theme system | ✅ | ✅ | Already working |
+| Auto-pairs | ✅ | ⚠️ | Partial |
+| Comment | ✅ | ⚠️ | Partial |
+| Which-key | ✅ | ⬜ | Future |
+| Terminal | ✅ | ⬜ | Future |
+| DAP debugging | ✅ | ⬜ | Future |
+
+### Task 9: Plugin Manager UI
+
+**Goal:** `:PhantomPlugins` command to manage plugins (like `:Lazy`).
+
+**File:** `plugins/core/plugin-manager.gza`
+
+**Features:**
+- List all plugins with status (loaded/not loaded)
+- Show load times
+- Install/update/remove plugins
+- View plugin config
+- Health checks
+
+**UI:**
+```
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ Phantom.Grim Plugin Manager
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+ Core Plugins (7)
+  ● file-tree        2.1ms  [loaded on VimEnter]
+  ● fuzzy-finder     1.8ms  [loaded on <leader>f]
+  ○ lsp-config       —      [not loaded yet]
+  ● statusline       0.5ms  [loaded at startup]
+  ● treesitter       3.2ms  [loaded on BufRead]
+  ● theme            0.3ms  [loaded at startup]
+  ● plugin-manager   0.4ms  [loaded at startup]
+
+ Editor Plugins (3)
+  ● comment          0.6ms  [loaded on gc]
+  ● autopairs        0.4ms  [loaded on InsertEnter]
+  ○ surround         —      [not loaded yet]
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Total: 10 loaded, 2 lazy  |  Startup: 9.3ms
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Commands: [i]nstall [u]pdate [c]lean [r]eload [q]uit
+```
+
+**Tests:** `tests/plugin_manager_test.zig` using TestHarness
+
+---
+
+## Testing Strategy
+
+### Task 10: Create Comprehensive Test Suite
+
+**Goal:** Use grim's TestHarness for all plugin testing.
+
+**Test Files Structure:**
+```
+tests/
+├── core/
+│   ├── file_tree_test.zig
+│   ├── fuzzy_finder_test.zig
+│   ├── statusline_test.zig
+│   └── treesitter_test.zig
+├── editor/
+│   ├── comment_test.zig
+│   ├── autopairs_test.zig
+│   └── surround_test.zig
+├── lsp/
+│   └── lsp_config_test.zig
+├── integration/
+│   ├── lazy_loading_test.zig
+│   ├── dependency_resolution_test.zig
+│   └── full_workflow_test.zig
+└── harness_helpers.zig
+```
+
+**Example Test (using grim's TestHarness):**
+```zig
+// tests/editor/comment_test.zig
+const std = @import("std");
+const TestHarness = @import("test_harness").TestHarness;
+
+test "comment plugin: toggle line comment" {
     const allocator = std.testing.allocator;
 
     var harness = try TestHarness.init(allocator);
     defer harness.deinit();
 
     // Load plugin
-    try harness.execCommand(":PluginLoad autopair");
+    try harness.loadPlugin("plugins/editor/comment.gza");
 
-    // Run all test cases
-    try harness.runTests(&autopair_tests);
+    // Create buffer with code
+    _ = try harness.createBuffer("test.zig");
+    try harness.sendKeys("i");
+    try harness.sendKeys("const x = 42;");
+    try harness.sendKeys("\x1b"); // ESC
+
+    // Toggle comment
+    try harness.sendKeys("gcc");
+
+    // Verify commented
+    try harness.assertBufferContent("// const x = 42;");
+
+    // Toggle again
+    try harness.sendKeys("gcc");
+
+    // Verify uncommented
+    try harness.assertBufferContent("const x = 42;");
 }
-```
 
----
-
-## Phase 5: Performance & Optimization
-
-### 5.1 Large File Benchmark
-
-**File:** `tests/performance_test.zig`
-
-```zig
-const std = @import("std");
-const PhantomBuffer = @import("phantom_buffer").PhantomBuffer;
-
-test "PhantomBuffer performance: 1M lines" {
+test "comment plugin: block comment in visual mode" {
     const allocator = std.testing.allocator;
 
-    var buffer = try PhantomBuffer.init(allocator, 1, .{});
-    defer buffer.deinit();
+    var harness = try TestHarness.init(allocator);
+    defer harness.deinit();
 
-    // Generate 1M lines
-    var content = std.ArrayList(u8).init(allocator);
-    defer content.deinit();
+    try harness.loadPlugin("plugins/editor/comment.gza");
 
-    var i: usize = 0;
-    while (i < 1_000_000) : (i += 1) {
-        try content.writer().print("Line {d}\n", .{i});
-    }
+    _ = try harness.createBuffer("test.zig");
+    try harness.sendKeys("i");
+    try harness.sendKeys("line1\nline2\nline3");
+    try harness.sendKeys("\x1b");
 
-    const start = std.time.milliTimestamp();
-    try buffer.insertText(0, content.items);
-    const insert_time = std.time.milliTimestamp() - start;
+    // Visual mode select 2 lines
+    try harness.sendKeys("gg");
+    try harness.sendKeys("V");
+    try harness.sendKeys("j");
 
-    std.debug.print("Inserted 1M lines in {}ms\n", .{insert_time});
+    // Comment
+    try harness.sendKeys("gc");
 
-    // Test undo performance
-    const undo_start = std.time.milliTimestamp();
-    try buffer.undo();
-    const undo_time = std.time.milliTimestamp() - undo_start;
-
-    std.debug.print("Undo 1M lines in {}ms\n", .{undo_time});
-
-    // Benchmarks should show significant improvement over rope-based Editor
+    try harness.assertBufferContent("// line1\n// line2\nline3");
 }
 ```
 
-### 5.2 Rendering Benchmark
+**Test Coverage Goals:**
+- [ ] Unit tests for each plugin
+- [ ] Integration tests for lazy loading
+- [ ] Integration tests for dependency resolution
+- [ ] Performance tests (startup time, load time)
+- [ ] All tests using grim's TestHarness
+- [ ] 90%+ code coverage
 
-Test incremental rendering performance with large files.
+**Run tests:**
+```bash
+zig build test
+```
 
 ---
 
-## Phase 6: Documentation & Polish
+## Documentation & Polish
 
-### 6.1 Create User Guide
+### Task 11: User Documentation
 
-**File:** `docs/USER_GUIDE.md`
+**Files to create:**
 
-- Getting started with phantom.grim
-- Configuration options
-- PhantomBuffer features (undo/redo, multi-cursor)
-- Plugin system
-- LSP integration
+#### USER_GUIDE.md
+- Getting started
+- Basic configuration
+- Plugin installation
+- Customization guide
+- Troubleshooting
 
-### 6.2 Create Plugin Development Guide
-
-**File:** `docs/PLUGIN_DEV.md`
-
-- How to write plugins for phantom.grim
-- TestHarness usage examples
-- PhantomPluginAPI reference
+#### PLUGIN_DEV_GUIDE.md
+- Creating custom plugins
+- Using grim modules
+- Testing with TestHarness
+- Publishing plugins
 - Best practices
 
-### 6.3 Migration Guide from grim
+#### API_REFERENCE.md
+- `phantom.setup()` API
+- Plugin specification format
+- Available grim modules
+- Runtime functions
+- Event system
 
-**File:** `docs/MIGRATION_FROM_GRIM.md`
+#### MIGRATION_FROM_LAZYVIM.md
+- Config translation guide
+- Plugin equivalents
+- Keybinding migration
+- Lua → Ghostlang cheatsheet
 
-- Key differences between grim and phantom.grim
-- Configuration changes
-- Plugin compatibility
-- Performance improvements
+---
+
+### Task 12: Health Check System
+
+**Goal:** `:PhantomHealth` command to diagnose issues.
+
+**File:** `plugins/extras/health.gza`
+
+**Checks:**
+- Grim version compatibility
+- Required binaries (zls, rust-analyzer, rg, fd)
+- Plugin load status
+- LSP server status
+- Tree-sitter parser availability
+- Git integration working
+- Theme loaded correctly
+
+**Output:**
+```
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ Phantom.Grim Health Check
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Core:
+  ✓ Grim version: 0.1.0 (compatible)
+  ✓ Zig version: 0.16.0
+  ✓ TestHarness: available
+
+Plugins:
+  ✓ file-tree: loaded
+  ✓ fuzzy-finder: loaded
+  ✓ lsp-config: loaded
+  ✓ treesitter: loaded
+  ✓ comment: loaded
+  ⚠ autopairs: not loaded (trigger: InsertEnter)
+
+LSP:
+  ✓ zls: running (pid 12345)
+  ✓ rust-analyzer: running (pid 12346)
+  ✗ ghostls: not found (install: cargo install ghostls)
+
+Treesitter:
+  ✓ zig: parser available
+  ✓ rust: parser available
+  ✓ ghostlang: parser available
+  ⚠ typescript: parser missing
+
+External Tools:
+  ✓ ripgrep (rg): 14.1.0
+  ✓ fd: 10.2.0
+  ✓ git: 2.45.0
+
+Theme:
+  ✓ tokyonight: loaded
+  ✓ Colors: 256 (truecolor)
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Status: 14 OK, 2 warnings, 1 error
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+```
 
 ---
 
 ## Implementation Timeline
 
-### Week 1: Foundation
-- ✅ Add grim dependency
-- ✅ Set up test infrastructure with TestHarness
-- ✅ Create basic PhantomBufferManager
+### Sprint 1: Grim Integration (Week 1-2)
+- [ ] Task 1: Wire grim runtime to plugin loader
+- [ ] Task 2: Integrate LSP client
+- [ ] Task 3: Integrate syntax highlighting
+- [ ] Task 4: Integrate UI-TUI
+- [ ] Test: All grim modules accessible
 
-### Week 2: Core Features
-- ⬜ Implement PhantomTUI
-- ⬜ Integrate undo/redo
-- ⬜ Implement multi-cursor support
-- ⬜ Wire up LSP diagnostics to PhantomBuffer
-
-### Week 3: Plugin System
-- ⬜ Create PhantomPluginAPI
-- ⬜ Migrate autopair plugin
-- ⬜ Migrate comment plugin
-- ⬜ Test all plugins with TestHarness
-
-### Week 4: Testing & Performance
-- ⬜ Write comprehensive unit tests
-- ⬜ Write integration tests
-- ⬜ Run performance benchmarks
-- ⬜ Optimize based on benchmarks
-
-### Week 5: Documentation & Release
-- ⬜ Write user guide
-- ⬜ Write plugin development guide
-- ⬜ Create migration guide
-- ⬜ Prepare v0.1.0 release
+**Deliverable:** Plugins execute through grim, not standalone
 
 ---
 
-## Immediate Next Steps
+### Sprint 2: Lazy Loading System (Week 3-4)
+- [ ] Task 5: Implement lazy loading
+- [ ] Task 6: Dependency resolution
+- [ ] Task 7: User-facing API (`phantom.setup()`)
+- [ ] Test: Lazy loading works, startup < 50ms
 
-1. **Add grim dependency:**
-   ```bash
-   cd /data/projects/phantom.grim
-   zig fetch --save https://github.com/ghostkellz/grim/archive/refs/heads/main.tar.gz
-   ```
-
-2. **Update build.zig with test harness export:**
-   ```zig
-   const grim = b.dependency("grim", .{
-       .target = target,
-       .optimize = optimize,
-       .@"export-test-harness" = true, // Enable TestHarness export
-   });
-
-   // Get test_harness module
-   const test_harness_mod = grim.module("test_harness");
-
-   // Add to your test module
-   const tests = b.addTest(.{
-       .root_module = b.createModule(.{
-           .root_source_file = b.path("tests/harness_test.zig"),
-           .target = target,
-           .optimize = optimize,
-           .imports = &.{
-               .{ .name = "test_harness", .module = test_harness_mod },
-           },
-       }),
-   });
-
-   const run_tests = b.addRunArtifact(tests);
-   const test_step = b.step("test", "Run tests");
-   test_step.dependOn(&run_tests.step);
-   ```
-
-3. **Create first test:**
-   ```bash
-   mkdir -p tests
-   touch tests/harness_test.zig
-   ```
-
-4. **Verify TestHarness import:**
-   ```zig
-   const std = @import("std");
-   const TestHarness = @import("test_harness").TestHarness;
-
-   test "TestHarness basic usage" {
-       const allocator = std.testing.allocator;
-       var harness = try TestHarness.init(allocator);
-       defer harness.deinit();
-
-       _ = try harness.createBuffer("test.txt");
-       try harness.sendKeys("i");
-       try harness.sendKeys("hello");
-       try harness.assertBufferContent("hello");
-   }
-   ```
-
-5. **Run tests:**
-   ```bash
-   zig build test
-   ```
-
-**📚 Complete guide:** See `/data/projects/grim/docs/TEST_HARNESS_USAGE.md` for detailed integration instructions.
+**Deliverable:** `init.gza` API like lazy.nvim
 
 ---
 
-## Questions & Decisions
+### Sprint 3: Core Plugins (Week 5-7)
+- [ ] Task 8.1: File tree plugin
+- [ ] Task 8.2: Fuzzy finder plugin
+- [ ] Task 8.3: LSP config plugin
+- [ ] Task 8.4: Statusline plugin
+- [ ] Task 8.5: Treesitter plugin
+- [ ] Test: All core plugins working
 
-### Q1: Should phantom.grim be a separate binary or a grim mode?
-
-**Decision:** Separate binary that imports grim as a library.
-
-**Rationale:**
-- Allows independent versioning
-- Cleaner separation of concerns
-- Users can choose grim (stable) or phantom.grim (cutting-edge)
-- Easier to experiment with new features
-
-### Q2: How to handle grim updates?
-
-**Approach:**
-- Pin to specific grim commit hash in build.zig.zon
-- Update dependency when needed: `zig fetch --save https://github.com/ghostkellz/grim/archive/[commit-hash].tar.gz`
-- Test thoroughly after each grim update
-
-### Q3: Plugin compatibility between grim and phantom.grim?
-
-**Strategy:**
-- PhantomPluginAPI extends grim's PluginAPI
-- Plugins written for grim should work in phantom.grim
-- Phantom.grim-specific features require PhantomPluginAPI
+**Deliverable:** 5 core plugins fully functional
 
 ---
 
-## Success Metrics
+### Sprint 4: Testing & Polish (Week 8-9)
+- [ ] Task 9: Plugin manager UI
+- [ ] Task 10: Comprehensive test suite
+- [ ] Task 11: User documentation
+- [ ] Task 12: Health check system
+- [ ] Test: 90%+ coverage, all docs complete
 
-- ✅ All grim plugins work in phantom.grim
-- ✅ Undo/redo working with unlimited history
-- ✅ Multi-cursor editing functional
-- ✅ 10x+ performance improvement on large files (>100k lines)
-- ✅ All LSP features working (completion, hover, diagnostics, etc.)
-- ✅ 90%+ test coverage
-- ✅ Comprehensive documentation
+**Deliverable:** Production-ready v1.0
 
 ---
 
-## Resources
+## Success Criteria
 
-- grim repository: https://github.com/ghostkellz/grim
-- PhantomTUI v0.5.0 docs: (link when available)
-- TestHarness examples: `/data/projects/grim/GLANG_TEST_HARNESS.md`
-- PhantomBuffer migration guide: `/data/projects/grim/PHANTOMBUFFER.md`
-- LSP integration docs: `/data/projects/grim/NEW_LSP_FEATURES_v0.3.0.md`
+**Functional Requirements:**
+- ✅ Plugins load lazily based on triggers
+- ✅ Dependency resolution prevents load errors
+- ✅ LSP works for zig, rust, ghostlang
+- ✅ Syntax highlighting via tree-sitter
+- ✅ Fuzzy finder for files/buffers/grep
+- ✅ File tree with git status
+- ✅ Plugin manager UI (`:PhantomPlugins`)
+- ✅ Health check (`:PhantomHealth`)
+
+**Performance Requirements:**
+- Startup time < 50ms (with 20+ lazy plugins)
+- Plugin load time < 10ms per plugin
+- Dependency resolution < 5ms
+- Zero blocking on UI thread
+
+**User Experience:**
+- Zero-config defaults (works out of the box)
+- Declarative plugin specs (lazy.nvim-style)
+- Comprehensive error messages
+- Hot reload on config change
+- LazyVim migration guide
+
+**Testing:**
+- 90%+ code coverage
+- All plugins tested with TestHarness
+- Integration tests for workflows
+- Performance benchmarks
+
+---
+
+## Quick Start for AI Assistants (GPT-5/Codex)
+
+### Context You Need
+
+**Repository:** `/data/projects/phantom.grim`
+
+**Build Status:** ✅ Passing (`zig build`)
+
+**Grim Dependency:**
+```zig
+// build.zig
+const grim = b.dependency("grim", .{
+    .@"export-test-harness" = true,
+    .ghostlang = true,
+});
+const test_harness_mod = grim.module("test_harness");
+```
+
+**Available Modules from Grim:**
+- `@import("test_harness")` - Testing framework
+- `@import("grim")` - Main module with runtime, core, lsp, syntax, ui_tui
+
+### Immediate Next Steps
+
+1. **Read the architecture docs:**
+   - `docs/PHANTOM_GRIM_ARCHITECTURE.md` - Complete framework design
+   - `docs/GRIM_MODULES_REFERENCE.md` - How to use grim modules
+
+2. **Start with Task 1 (Grim Runtime Integration):**
+   - Modify `src/core/plugin_loader.zig`
+   - Replace custom runtime with `grim.runtime.Runtime`
+   - Test with existing plugins
+
+3. **Write tests using TestHarness:**
+   - Start with `tests/comment_test.zig`
+   - Use TestHarness API from grim
+   - Follow examples in `GRIM_MODULES_REFERENCE.md`
+
+4. **Implement lazy loading (Task 5):**
+   - Create `src/core/lazy_loader.zig`
+   - Support event, ft, cmd, keys triggers
+   - Wire to plugin registry
+
+### Development Workflow
+
+```bash
+# Build
+zig build
+
+# Run tests
+zig build test
+
+# Run phantom.grim
+./zig-out/bin/phantom_grim
+
+# Format code
+zig fmt .
+```
+
+### Code Style
+
+- Use Zig 0.16 ArrayList API: `ArrayList.empty`, `deinit(allocator)`, `append(allocator, item)`
+- Import grim modules: `const grim = @import("grim");`
+- Use TestHarness for all tests
+- Follow existing code patterns in `src/core/`
 
 ---
 
 **Last Updated:** 2025-10-10
-**Status:** Ready to begin Phase 1
-**Next Action:** Add grim dependency and create first test
+**Status:** Ready for Sprint 1
+**Next Action:** Task 1 - Wire grim runtime to plugin loader
+
+**Questions?** See:
+- Architecture: `docs/PHANTOM_GRIM_ARCHITECTURE.md`
+- Grim Modules: `docs/GRIM_MODULES_REFERENCE.md`
+- TestHarness: `/data/projects/grim/docs/TEST_HARNESS_USAGE.md`
