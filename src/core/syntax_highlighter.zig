@@ -1,14 +1,19 @@
 //! core/syntax_highlighter.zig
-//! Caches tree-sitter highlights to avoid repeated parsing during rendering.
+//! Wraps grim.syntax highlighting with per-buffer caching.
 
 const std = @import("std");
+const grim = @import("grim");
 const config = @import("config_manager.zig");
+
+const GrimSyntax = grim.syntax;
+const GrimCore = grim.core;
 
 pub const SyntaxHighlighter = struct {
     allocator: std.mem.Allocator,
-    config_manager: *config.ConfigManager,
     cache: CacheMap,
     generation: u64 = 0,
+    highlighter: GrimSyntax.SyntaxHighlighter,
+    rope: GrimCore.Rope,
 
     const CacheMap = std.AutoHashMap(CacheKey, CachedValue);
 
@@ -28,7 +33,7 @@ pub const SyntaxHighlighter = struct {
         buffer_id: u64,
         /// Name of the language/grammar (e.g. "zig", "lua").
         language: []const u8,
-        /// Canonical path used for tree-sitter language inference.
+        /// Canonical path used for language inference.
         path: []const u8,
         /// Current buffer contents.
         content: []const u8,
@@ -41,12 +46,14 @@ pub const SyntaxHighlighter = struct {
         cache_hit: bool,
     };
 
-    pub fn init(allocator: std.mem.Allocator, config_manager: *config.ConfigManager) SyntaxHighlighter {
+    pub fn init(allocator: std.mem.Allocator) !SyntaxHighlighter {
+        const rope = try GrimCore.Rope.init(allocator);
         return SyntaxHighlighter{
             .allocator = allocator,
-            .config_manager = config_manager,
             .cache = CacheMap.init(allocator),
             .generation = 0,
+            .highlighter = GrimSyntax.SyntaxHighlighter.init(allocator),
+            .rope = rope,
         };
     }
 
@@ -56,6 +63,8 @@ pub const SyntaxHighlighter = struct {
             entry.value_ptr.highlight_set.deinit(self.allocator);
         }
         self.cache.deinit();
+        self.highlighter.deinit();
+        self.rope.deinit();
     }
 
     fn hashBytes(bytes: []const u8) u64 {
@@ -83,15 +92,13 @@ pub const SyntaxHighlighter = struct {
             };
         }
 
-        var highlight_set = try self.config_manager.getHighlights(request.path, request.content);
+        var highlight_set = try self.computeHighlights(request);
         errdefer highlight_set.deinit(self.allocator);
 
         self.generation += 1;
 
         const gop = try self.cache.getOrPut(key);
         if (gop.found_existing) {
-            // Another thread may have populated the cache between get and insert.
-            // Prefer existing entry to avoid double-free risk.
             highlight_set.deinit(self.allocator);
             return Result{
                 .highlights = &gop.value_ptr.highlight_set,
@@ -140,4 +147,83 @@ pub const SyntaxHighlighter = struct {
         self.cache.clearRetainingCapacity();
         self.generation += 1;
     }
+
+    fn computeHighlights(self: *SyntaxHighlighter, request: Request) !config.HighlightSet {
+        const language_path = if (request.path.len != 0)
+            request.path
+        else
+            fallbackPathForLanguage(request.language);
+
+        try self.highlighter.setLanguage(language_path);
+        try self.replaceRopeContent(request.content);
+
+        const syntax_highlights = try self.highlighter.highlight(&self.rope);
+        defer self.allocator.free(syntax_highlights);
+
+        var converted = std.ArrayListUnmanaged(config.Highlight){};
+        errdefer converted.deinit(self.allocator);
+
+        for (syntax_highlights) |item| {
+            const token = tokenForType(item.type) orelse continue;
+            try converted.append(self.allocator, .{
+                .start = item.start,
+                .stop = item.end,
+                .token_type = token,
+            });
+        }
+
+        const highlight_slice = try converted.toOwnedSlice(self.allocator);
+
+        return config.HighlightSet{
+            .buffer = &[_]u8{},
+            .highlights = highlight_slice,
+            .owns_buffer = false,
+            .owns_highlights = highlight_slice.len > 0,
+        };
+    }
+
+    fn replaceRopeContent(self: *SyntaxHighlighter, content: []const u8) !void {
+        const current_len = self.rope.len();
+        if (current_len != 0) {
+            try self.rope.delete(0, current_len);
+        }
+        if (content.len != 0) {
+            try self.rope.insert(0, content);
+        }
+    }
 };
+
+fn fallbackPathForLanguage(language: []const u8) []const u8 {
+    if (std.ascii.eqlIgnoreCase(language, "zig")) return "buffer.zig";
+    if (std.ascii.eqlIgnoreCase(language, "rust")) return "buffer.rs";
+    if (std.ascii.eqlIgnoreCase(language, "ts")) return "buffer.ts";
+    if (std.ascii.eqlIgnoreCase(language, "tsx")) return "buffer.tsx";
+    if (std.ascii.eqlIgnoreCase(language, "js")) return "buffer.js";
+    if (std.ascii.eqlIgnoreCase(language, "lua")) return "buffer.lua";
+    if (std.ascii.eqlIgnoreCase(language, "python")) return "buffer.py";
+    if (std.ascii.eqlIgnoreCase(language, "toml")) return "buffer.toml";
+    if (std.ascii.eqlIgnoreCase(language, "yaml")) return "buffer.yaml";
+    if (std.ascii.eqlIgnoreCase(language, "json")) return "buffer.json";
+    if (std.ascii.eqlIgnoreCase(language, "markdown")) return "buffer.md";
+    if (std.ascii.eqlIgnoreCase(language, "c")) return "buffer.c";
+    if (std.ascii.eqlIgnoreCase(language, "cpp")) return "buffer.cpp";
+    if (std.ascii.eqlIgnoreCase(language, "go")) return "buffer.go";
+    if (std.ascii.eqlIgnoreCase(language, "ghostlang") or std.ascii.eqlIgnoreCase(language, "gza")) return "buffer.gza";
+    return "buffer.txt";
+}
+
+fn tokenForType(kind: GrimSyntax.HighlightType) ?[]const u8 {
+    return switch (kind) {
+        .keyword => "keyword",
+        .string_literal => "string",
+        .number_literal => "number",
+        .comment => "comment",
+        .function_name => "function",
+        .type_name => "type",
+        .variable => "variable",
+        .operator => "operator",
+        .punctuation => "default",
+        .@"error" => "error",
+        .none => null,
+    };
+}

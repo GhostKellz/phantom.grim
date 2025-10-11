@@ -983,46 +983,6 @@ pub const ConfigManager = struct {
         try self.applyThemeOverrides();
     }
 
-    /// Retrieve tree-sitter highlight entries for the provided buffer content.
-    pub fn getHighlights(self: *ConfigManager, path: []const u8, content: []const u8) !HighlightSet {
-        const listing_opt = try self.ghostlang_runtime.treesitterHighlightListing(path, content);
-        if (listing_opt == null) return HighlightSet.empty();
-
-        const listing = listing_opt.?;
-
-        var entries = std.ArrayListUnmanaged(Highlight){};
-        errdefer entries.deinit(self.allocator);
-
-        var iter = std.mem.splitScalar(u8, listing, '\n');
-        while (iter.next()) |line| {
-            if (line.len == 0) continue;
-
-            var part_iter = std.mem.splitScalar(u8, line, ',');
-            const start_str = part_iter.next() orelse continue;
-            const stop_str = part_iter.next() orelse continue;
-            const token_str = part_iter.next() orelse continue;
-
-            const start = std.fmt.parseInt(usize, std.mem.trim(u8, start_str, " "), 10) catch continue;
-            const stop = std.fmt.parseInt(usize, std.mem.trim(u8, stop_str, " "), 10) catch continue;
-            const token = std.mem.trim(u8, token_str, " ");
-
-            try entries.append(self.allocator, Highlight{
-                .start = start,
-                .stop = stop,
-                .token_type = token,
-            });
-        }
-
-        const highlights = try entries.toOwnedSlice(self.allocator);
-
-        return HighlightSet{
-            .buffer = listing,
-            .highlights = highlights,
-            .owns_buffer = true,
-            .owns_highlights = true,
-        };
-    }
-
     fn parseFuzzyDecoratedListing(
         allocator: std.mem.Allocator,
         listing: []u8,
@@ -1140,39 +1100,6 @@ test "pluginPathToModuleName converts plugin paths" {
     const module2 = try ConfigManager.pluginPathToModuleName(allocator, "statusline.gza");
     defer allocator.free(module2);
     try std.testing.expectEqualStrings("plugins.statusline", module2);
-}
-
-test "getHighlights falls back when Grim FFI is unavailable" {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit();
-    const allocator = gpa.allocator();
-
-    var manager = try ConfigManager.init(allocator, ".");
-    defer manager.deinit();
-
-    const sample_code =
-        "fn main() {\n" ++
-        "    const message = \"hello\";\n" ++
-        "    return message;\n" ++
-        "}\n";
-
-    var highlights = try manager.getHighlights("sample.zig", sample_code);
-    defer highlights.deinit(allocator);
-    try std.testing.expect(highlights.highlights.len > 0);
-
-    const disable_ffi =
-        "local bridge = require(\"grim.bridge\")\n" ++
-        "bridge.__debug_set_ffi({})\n";
-    try manager.executeCode(disable_ffi);
-
-    var fallback_highlights = try manager.getHighlights("sample.zig", sample_code);
-    defer fallback_highlights.deinit(allocator);
-    try std.testing.expect(fallback_highlights.highlights.len > 0);
-
-    const reset_ffi =
-        "local bridge = require(\"grim.bridge\")\n" ++
-        "bridge.__debug_reset_ffi()\n";
-    try manager.executeCode(reset_ffi);
 }
 
 test "parseFuzzyDecoratedListing parses entries and highlights" {

@@ -93,7 +93,7 @@ pub fn main() !void {
     defer config_manager.deinit();
     config.setGlobalManager(&config_manager);
 
-    var syntax_highlighter = SyntaxHighlighter.init(allocator, &config_manager);
+    var syntax_highlighter = try SyntaxHighlighter.init(allocator);
     defer syntax_highlighter.deinit();
 
     // Load all configurations
@@ -133,7 +133,7 @@ pub fn main() !void {
     const highlight_result = try syntax_highlighter.getHighlights(highlight_request);
     const highlights = highlight_result.highlights;
 
-    std.debug.print("\n[tree-sitter highlights] cache={s}\n", .{if (highlight_result.cache_hit) "hit" else "miss"});
+    std.debug.print("\n[grim highlights] cache={s}\n", .{if (highlight_result.cache_hit) "hit" else "miss"});
     for (highlights.highlights) |hl| {
         std.debug.print("  {d}-{d}: {s}\n", .{ hl.start, hl.stop, hl.token_type });
     }
