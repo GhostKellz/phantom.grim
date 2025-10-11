@@ -8,23 +8,13 @@ const zlog = @import("zlog");
 const zhttp = @import("zhttp");
 const tar = std.tar;
 const grim = @import("grim");
-const Runtime = grim.runtime;
+const runtime = grim.runtime;
+const plugin_discovery = runtime.plugin_discovery;
+const core = grim.core;
+const syntax = grim.syntax;
 
-comptime {
-    @compileLog(@hasDecl(Runtime, "init"));
-    @compileLog(@hasDecl(Runtime, "Runtime"));
-    @compileLog(@hasDecl(Runtime, "plugin_api"));
-    for (std.meta.declarations(Runtime)) |decl| {
-        @compileLog(decl.name);
-    }
-    const runtime_plugin_loader = Runtime.plugin_loader;
-    @compileLog(@typeName(@TypeOf(runtime_plugin_loader)));
-    @compileLog(@hasDecl(runtime_plugin_loader, "PluginLoader"));
-    for (std.meta.declarations(runtime_plugin_loader)) |decl| {
-        @compileLog("runtime.plugin_loader", decl.name);
-    }
-    @compileLog(@typeName(@TypeOf(Runtime.plugin_loader.PluginLoader)));
-}
+const phantom_host = @import("plugin_host_adapter.zig");
+const PhantomPluginHost = phantom_host.PhantomPluginHost;
 
 fn appendJsonString(buffer: *std.ArrayList(u8), allocator: std.mem.Allocator, value: []const u8) !void {
     const hex_digits = "0123456789abcdef";
@@ -57,32 +47,139 @@ fn appendUnsigned(buffer: *std.ArrayList(u8), allocator: std.mem.Allocator, valu
     try buffer.appendSlice(allocator, str);
 }
 
+pub const PluginConfig = struct {
+    registry_url: []const u8,
+    install_dir: []const u8,
+};
+
 pub const PluginLoader = struct {
     allocator: std.mem.Allocator,
-    registry_url: []const u8,
-    plugin_dir: []const u8,
-    runtime: *Runtime,
 
-    pub fn init(allocator: std.mem.Allocator, registry_url: []const u8, plugin_dir: []const u8) !*PluginLoader {
-        var runtime_instance = try Runtime.init(allocator);
-        errdefer runtime_instance.deinit();
+    // Grim runtime components
+    plugin_api: *runtime.PluginAPI,
+    plugin_manager: *runtime.PluginManager,
+    runtime_loader: runtime.PluginLoader,
+    discovery: runtime.PluginDiscovery,
 
-        const runtime_ptr = try allocator.create(Runtime);
-        runtime_ptr.* = runtime_instance;
+    // Phantom host integration
+    host_adapter: *PhantomPluginHost,
+    loaded_plugins: std.StringHashMap(*runtime.LoadedPlugin),
 
+    // Minimal editor context for runtime APIs
+    editor_context: *runtime.PluginAPI.EditorContext,
+    cursor_storage: runtime.PluginAPI.EditorContext.CursorPosition,
+    mode_storage: runtime.PluginAPI.EditorContext.EditorMode,
+    rope: core.Rope,
+    highlighter: syntax.SyntaxHighlighter,
+
+    // Phantom-specific configuration
+    config: PluginConfig,
+    install_dir: []const u8,
+
+    pub fn init(allocator: std.mem.Allocator, config: PluginConfig) !*PluginLoader {
         const loader = try allocator.create(PluginLoader);
-        loader.* = .{
-            .allocator = allocator,
-            .registry_url = registry_url,
-            .plugin_dir = plugin_dir,
-            .runtime = runtime_ptr,
+        errdefer allocator.destroy(loader);
+
+        loader.* = undefined;
+        loader.allocator = allocator;
+        loader.install_dir = try allocator.dupe(u8, config.install_dir);
+        errdefer allocator.free(loader.install_dir);
+
+        loader.config = .{
+            .registry_url = config.registry_url,
+            .install_dir = loader.install_dir,
         };
+
+        loader.loaded_plugins = std.StringHashMap(*runtime.LoadedPlugin).init(allocator);
+        errdefer loader.loaded_plugins.deinit();
+
+        loader.rope = try core.Rope.init(allocator);
+        errdefer loader.rope.deinit();
+
+        loader.highlighter = syntax.SyntaxHighlighter.init(allocator);
+        errdefer loader.highlighter.deinit();
+
+        loader.cursor_storage = .{ .line = 0, .column = 0, .byte_offset = 0 };
+        loader.mode_storage = runtime.PluginAPI.EditorContext.EditorMode.normal;
+
+        loader.editor_context = try allocator.create(runtime.PluginAPI.EditorContext);
+        errdefer allocator.destroy(loader.editor_context);
+        loader.editor_context.* = .{
+            .rope = &loader.rope,
+            .cursor_position = &loader.cursor_storage,
+            .current_mode = &loader.mode_storage,
+            .highlighter = &loader.highlighter,
+            .active_buffer_id = 1,
+        };
+
+        loader.host_adapter = try allocator.create(PhantomPluginHost);
+        errdefer allocator.destroy(loader.host_adapter);
+        loader.host_adapter.* = PhantomPluginHost.init(allocator);
+        errdefer loader.host_adapter.deinit();
+
+        loader.plugin_api = try allocator.create(runtime.PluginAPI);
+        errdefer allocator.destroy(loader.plugin_api);
+        loader.plugin_api.* = runtime.PluginAPI.init(allocator, loader.editor_context);
+        errdefer loader.plugin_api.deinit();
+
+        var plugin_dirs = [_][]const u8{
+            loader.install_dir,
+            "~/.config/grim/plugins/",
+        };
+
+        loader.plugin_manager = try allocator.create(runtime.PluginManager);
+        errdefer allocator.destroy(loader.plugin_manager);
+        loader.plugin_manager.* = try runtime.PluginManager.init(
+            allocator,
+            loader.plugin_api,
+            plugin_dirs[0..],
+        );
+        errdefer loader.plugin_manager.deinit();
+
+        loader.runtime_loader = runtime.PluginLoader.init(allocator);
+        loader.discovery = runtime.PluginDiscovery.init(allocator);
+        errdefer loader.discovery.deinit();
+
+        try loader.discovery.addSearchPath(loader.install_dir);
+        if (@hasDecl(runtime.PluginDiscovery, "addDefaultPaths")) {
+            try loader.discovery.addDefaultPaths();
+        }
+
         return loader;
     }
 
     pub fn deinit(self: *PluginLoader) void {
-        self.runtime.deinit();
-        self.allocator.destroy(self.runtime);
+        var it = self.loaded_plugins.iterator();
+        while (it.next()) |entry| {
+            const loaded = entry.value_ptr.*;
+            self.runtime_loader.callTeardown(loaded) catch {};
+            loaded.deinit();
+            self.allocator.free(entry.key_ptr.*);
+        }
+        self.loaded_plugins.deinit();
+
+        self.discovery.deinit();
+        comptime {
+            if (@hasDecl(runtime.PluginLoader, "deinit")) {
+                self.runtime_loader.deinit();
+            }
+        }
+
+        self.plugin_manager.deinit();
+        self.allocator.destroy(self.plugin_manager);
+
+        self.plugin_api.deinit();
+        self.allocator.destroy(self.plugin_api);
+
+        self.host_adapter.deinit();
+        self.allocator.destroy(self.host_adapter);
+
+        self.allocator.destroy(self.editor_context);
+
+        self.highlighter.deinit();
+        self.rope.deinit();
+
+        self.allocator.free(self.install_dir);
         self.allocator.destroy(self);
     }
 
@@ -91,14 +188,14 @@ pub const PluginLoader = struct {
         zlog.info("Fetching plugin: {s}@{s}", .{ name, version });
 
         // Construct download URL
-        const url = try std.fmt.allocPrint(self.allocator, "{s}/{s}/{s}.tar.gz", .{ self.registry_url, name, version });
+        const url = try std.fmt.allocPrint(self.allocator, "{s}/{s}/{s}.tar.gz", .{ self.config.registry_url, name, version });
         defer self.allocator.free(url);
 
         const plugin_relative = try normalizedPluginPath(self.allocator, name);
         defer self.allocator.free(plugin_relative);
 
         // Create plugin directory
-        const plugin_path = try std.fs.path.join(self.allocator, &[_][]const u8{ self.plugin_dir, plugin_relative });
+        const plugin_path = try std.fs.path.join(self.allocator, &[_][]const u8{ self.install_dir, plugin_relative });
         defer self.allocator.free(plugin_path);
 
         if (try self.isPluginUpToDate(plugin_path, name, version)) {
@@ -251,7 +348,7 @@ pub const PluginLoader = struct {
         const manifest = parsed.value;
         return std.mem.eql(u8, manifest.name, name) and
             std.mem.eql(u8, manifest.version, version) and
-            std.mem.eql(u8, manifest.registry_url, self.registry_url);
+            std.mem.eql(u8, manifest.registry_url, self.config.registry_url);
     }
 
     fn writeManifest(self: *PluginLoader, plugin_path: []const u8, name: []const u8, version: []const u8) !void {
@@ -263,7 +360,7 @@ pub const PluginLoader = struct {
         const manifest = Manifest{
             .name = name,
             .version = version,
-            .registry_url = self.registry_url,
+            .registry_url = self.config.registry_url,
             .installed_at = std.math.cast(u64, now) orelse 0,
         };
 
@@ -342,51 +439,80 @@ pub const PluginLoader = struct {
     };
     /// Load all installed plugin modules into the Ghostlang runtime.
     pub fn loadInstalled(self: *PluginLoader) !void {
-        var dir = std.fs.cwd().openDir(self.plugin_dir, .{ .iterate = true }) catch |err| {
-            if (err == error.FileNotFound) {
-                zlog.info("Plugin directory not found: {s}", .{self.plugin_dir});
-                return;
-            }
-            return err;
-        };
-        defer dir.close();
+        var discovered = try self.discovery.discoverAll();
+        defer discovered.deinit(self.allocator);
 
-        var walker = try dir.walk(self.allocator);
-        defer walker.deinit();
+        runtime.PluginDiscovery.sortByPriority(&discovered);
+        try runtime.PluginDiscovery.checkDependencies(discovered.items);
 
         var loaded_count: usize = 0;
 
-        while (try walker.next()) |entry| {
-            if (entry.kind != .file) continue;
-            if (!std.mem.endsWith(u8, entry.path, ".gza")) continue;
-
-            const module_path = try std.fs.path.join(self.allocator, &[_][]const u8{ self.plugin_dir, entry.path });
-            defer self.allocator.free(module_path);
-
-            self.runtime.loadModule(module_path) catch |err| {
-                zlog.err("Failed to load plugin module {s}: {any}", .{ module_path, err });
+        for (discovered.items) |*entry| {
+            self.loadDiscovered(entry) catch |err| {
+                zlog.err("Failed to load plugin {s}: {any}", .{ entry.name, err });
                 continue;
             };
-
             loaded_count += 1;
         }
 
-        zlog.info("Loaded {d} plugins from {s}", .{ loaded_count, self.plugin_dir });
+        zlog.info("Loaded {d} plugins from discovery", .{loaded_count});
     }
 
-    /// Load a single plugin module by path (absolute or relative to plugin directory).
-    pub fn loadPlugin(self: *PluginLoader, module_path: []const u8) !void {
-        if (std.fs.path.isAbsolute(module_path)) {
-            try self.runtime.loadModule(module_path);
-            zlog.info("Plugin loaded: {s}", .{module_path});
-            return;
+    /// Load a single plugin module by path (absolute or relative to install directory).
+    pub fn loadPlugin(self: *PluginLoader, plugin_path: []const u8) !void {
+        const resolved_path = try self.resolvePluginPath(plugin_path);
+        defer self.allocator.free(resolved_path);
+
+        var discovered = try self.discovery.discoverAll();
+        defer discovered.deinit(self.allocator);
+
+        runtime.PluginDiscovery.sortByPriority(&discovered);
+        try runtime.PluginDiscovery.checkDependencies(discovered.items);
+
+        for (discovered.items) |*entry| {
+            if (std.mem.eql(u8, entry.path, resolved_path)) {
+                try self.loadDiscovered(entry);
+                return;
+            }
         }
 
-        const full_path = try std.fs.path.join(self.allocator, &[_][]const u8{ self.plugin_dir, module_path });
-        defer self.allocator.free(full_path);
+        return error.PluginNotFound;
+    }
 
-        try self.runtime.loadModule(full_path);
-        zlog.info("Plugin loaded: {s}", .{full_path});
+    fn loadDiscovered(self: *PluginLoader, entry: *plugin_discovery.DiscoveredPlugin) !void {
+        const loaded_value = try self.runtime_loader.load(entry, &self.plugin_manager.ghostlang_host);
+
+        const loaded = try self.allocator.create(runtime.LoadedPlugin);
+        loaded.* = loaded_value;
+
+        errdefer {
+            self.runtime_loader.callTeardown(loaded) catch {};
+            loaded.deinit();
+            self.allocator.destroy(loaded);
+        }
+
+        const callbacks = self.host_adapter.callbacks();
+        try self.runtime_loader.callSetup(loaded, callbacks);
+
+        if (self.loaded_plugins.fetchRemove(entry.name)) |previous| {
+            self.runtime_loader.callTeardown(previous.value) catch {};
+            previous.value.deinit();
+            self.allocator.free(previous.key);
+        }
+
+        const key = try self.allocator.dupe(u8, entry.name);
+        errdefer self.allocator.free(key);
+
+        try self.loaded_plugins.put(key, loaded);
+        zlog.info("Plugin loaded: {s}", .{entry.name});
+    }
+
+    fn resolvePluginPath(self: *PluginLoader, plugin_path: []const u8) ![]u8 {
+        if (std.fs.path.isAbsolute(plugin_path)) {
+            return try self.allocator.dupe(u8, plugin_path);
+        }
+
+        return std.fs.path.join(self.allocator, &[_][]const u8{ self.install_dir, plugin_path });
     }
 
     fn relativePathToModuleName(self: *PluginLoader, relative_path: []const u8) ![]u8 {

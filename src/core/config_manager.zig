@@ -4,7 +4,9 @@
 const std = @import("std");
 const flare = @import("flare");
 const zlog = @import("zlog");
-const PluginLoader = @import("plugin_loader.zig").PluginLoader;
+const plugin_loader_mod = @import("plugin_loader.zig");
+const PluginLoader = plugin_loader_mod.PluginLoader;
+const PluginConfig = plugin_loader_mod.PluginConfig;
 const GhostlangRuntime = @import("ghostlang_runtime.zig").GhostlangRuntime;
 
 fn appendJsonString(buffer: *std.ArrayList(u8), allocator: std.mem.Allocator, value: []const u8) !void {
@@ -425,7 +427,11 @@ pub const ConfigManager = struct {
         };
 
         const default_registry = "https://registry.phantom.grim";
-        const plugin_loader = try PluginLoader.init(allocator, default_registry, plugin_dir);
+        const loader_config = PluginConfig{
+            .registry_url = default_registry,
+            .install_dir = plugin_dir,
+        };
+        const plugin_loader = try PluginLoader.init(allocator, loader_config);
         errdefer plugin_loader.deinit();
 
         var theme = Theme.init(allocator);
@@ -636,7 +642,7 @@ pub const ConfigManager = struct {
     }
 
     fn recordPluginInstall(self: *ConfigManager, name: []const u8, version: []const u8, installed_at: u64) !void {
-        try self.plugin_lock.upsert(name, version, self.plugin_loader.registry_url, installed_at);
+        try self.plugin_lock.upsert(name, version, self.plugin_loader.config.registry_url, installed_at);
         try self.writeLockfile();
     }
 
