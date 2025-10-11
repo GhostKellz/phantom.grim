@@ -21,6 +21,42 @@ pub fn build(b: *std.Build) void {
     // target and optimize options) will be listed when running `zig build --help`
     // in this directory.
 
+    const zsync_dep = b.dependency("zsync", .{
+        .target = target,
+        .optimize = optimize,
+    });
+    const ghostlang_dep = b.dependency("ghostlang", .{
+        .target = target,
+        .optimize = optimize,
+    });
+    const grove_dep = b.dependency("grove", .{
+        .target = target,
+        .optimize = optimize,
+    });
+    const zlog_dep = b.dependency("zlog", .{
+        .target = target,
+        .optimize = optimize,
+    });
+    const zhttp_dep = b.dependency("zhttp", .{
+        .target = target,
+        .optimize = optimize,
+    });
+    const flare_dep = b.dependency("flare", .{
+        .target = target,
+        .optimize = optimize,
+    });
+    const grim_dep = b.dependency("grim", .{
+        .target = target,
+        .optimize = optimize,
+        .@"export-test-harness" = true, // Enable TestHarness export
+        .ghostlang = true,               // Enable Ghostlang support
+    });
+
+    // Get grim modules for phantom.grim integration
+    // Note: Only test_harness is exported separately when @"export-test-harness" = true
+    // Other grim functionality is accessed through the main "grim" module
+    const grim_test_harness_mod = grim_dep.module("test_harness"); // Testing framework
+
     // This creates a module, which represents a collection of source files alongside
     // some compilation options, such as optimization mode and linked system libraries.
     // Zig modules are the preferred way of making Zig code available to consumers.
@@ -40,10 +76,13 @@ pub fn build(b: *std.Build) void {
         // which requires us to specify a target.
         .target = target,
         .imports = &.{
-            .{ .name = "zsync", .module = b.dependency("zsync", .{}).module("zsync") },
-            .{ .name = "ghostlang", .module = b.dependency("ghostlang", .{}).module("ghostlang") },
-            .{ .name = "grove", .module = b.dependency("grove", .{}).module("grove") },
-            .{ .name = "zlog", .module = b.dependency("zlog", .{}).module("zlog") },
+            .{ .name = "zsync", .module = zsync_dep.module("zsync") },
+            .{ .name = "ghostlang", .module = ghostlang_dep.module("ghostlang") },
+            .{ .name = "grove", .module = grove_dep.module("grove") },
+            .{ .name = "zlog", .module = zlog_dep.module("zlog") },
+            .{ .name = "grim", .module = grim_dep.module("grim") },
+            // TestHarness for plugin testing (exported separately)
+            .{ .name = "test_harness", .module = grim_test_harness_mod },
         },
     });
 
@@ -85,12 +124,15 @@ pub fn build(b: *std.Build) void {
                 // can be extremely useful in case of collisions (which can happen
                 // importing modules from different packages).
                 .{ .name = "phantom_grim", .module = mod },
-                .{ .name = "zsync", .module = b.dependency("zsync", .{}).module("zsync") },
-                .{ .name = "ghostlang", .module = b.dependency("ghostlang", .{}).module("ghostlang") },
-                .{ .name = "grove", .module = b.dependency("grove", .{}).module("grove") },
-                .{ .name = "zlog", .module = b.dependency("zlog", .{}).module("zlog") },
-                .{ .name = "zhttp", .module = b.dependency("zhttp", .{}).module("zhttp") },
-                .{ .name = "flare", .module = b.dependency("flare", .{}).module("flare") },
+                .{ .name = "zsync", .module = zsync_dep.module("zsync") },
+                .{ .name = "ghostlang", .module = ghostlang_dep.module("ghostlang") },
+                .{ .name = "grove", .module = grove_dep.module("grove") },
+                .{ .name = "zlog", .module = zlog_dep.module("zlog") },
+                .{ .name = "zhttp", .module = zhttp_dep.module("zhttp") },
+                .{ .name = "flare", .module = flare_dep.module("flare") },
+                .{ .name = "grim", .module = grim_dep.module("grim") },
+                // TestHarness for plugin testing (exported separately)
+                .{ .name = "test_harness", .module = grim_test_harness_mod },
             },
         }),
     });

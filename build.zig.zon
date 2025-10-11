@@ -36,6 +36,14 @@
             .url = "https://github.com/ghostkellz/zsync/archive/main.tar.gz",
             .hash = "zsync-0.5.4-KAuheZ4THQAlN32uBKm76ezT7dPT6rvj4ll56NiA9z9M",
         },
+        .phantom = .{
+            .url = "https://github.com/ghostkellz/phantom/archive/main.tar.gz",
+            .hash = "phantom-0.5.0-E0eWBBcxEgBL64hlBvhWs5mNWAkruSyJ_kSR5xTBsWM_",
+        },
+        .gcode = .{
+            .url = "https://github.com/ghostkellz/gcode/archive/refs/heads/main.tar.gz",
+            .hash = "gcode-0.1.0-AWO1LsMKDwDmRZJBAvEZSO_lEbpzF0Yi4V2yCkTRdJVD",
+        },
         .ghostlang = .{
             .url = "https://github.com/ghostkellz/ghostlang/archive/main.tar.gz",
             .hash = "ghostlang-0.1.0-_SzSPTmiBQDNBVoKrlD3968nr64-NeIhF0MdXxAWMHNr",
@@ -55,6 +63,18 @@
         .flare = .{
             .url = "https://github.com/ghostkellz/flare/archive/main.tar.gz",
             .hash = "flare-0.1.0-NK4JafGMAQA8xE2ah8YBxO74sOkWrsQYTkWQ64D1PJVg",
+        },
+        .zap = .{
+            .url = "https://github.com/ghostkellz/zap/archive/refs/heads/main.tar.gz",
+            .hash = "zap-0.0.0--jHF1gHHAQAJ-1P80ZGWuusd3Q3wLH2EkaxsXTX_JKTJ",
+        },
+        .ghostls = .{
+            .url = "https://github.com/ghostkellz/ghostls/archive/refs/heads/main.tar.gz",
+            .hash = "ghostls-0.3.0-fDo9dCrEAgAwhnUr5wL9ba0rKyAeYvSQsrH-7_EjV82N",
+        },
+        .grim = .{
+            .url = "https://github.com/ghostkellz/grim/archive/refs/heads/main.tar.gz",
+            .hash = "grim-0.0.0-BbxsAcvPDQA2q5etvZd8olqukrq_pKJ1Rob5hZfnwR9C",
         },
     },
     .paths = .{

@@ -59,7 +59,7 @@ Item 6 (docs & onboarding) stays in parallel discovery but will be scheduled onc
 
 ## 3. Bring Up Phase 3 Plugin Set
 
-**Current status:** Milestone plan documented in `docs/milestone3_plugin_plan.md`. `editor.comment` is live with lazy descriptors, default keymaps (`gcc`, `gc`), and fallback buffer handling while we wait for editor-side APIs.
+**Current status:** Milestone plan documented in `docs/milestone3_plugin_plan.md`. `editor.comment` now rides the runtime-aware `textops` layer with repeat support and regression specs. `editor.autopairs` ships with pair insertion/backspace handling and matching tests, ready for runtime buffer events when exposed.
 
 **Dependencies:** P0 runtime asks (buffer edit API, command replay hooks) are captured in `docs/GRIM_WISHLIST.md`. We should land them before widening coverage so autopairs/surround can avoid brittle scratch adapters.
 
@@ -70,10 +70,10 @@ Target parity plugins (per `FUTURE_GRIM_PHANTOM_GUIDE.md`, §3.1–3.3):
 - **Git & utils:** confirm `git-signs`/diagnostics exist or create equivalents.
 
 **Next actions:**
-1. Implement `editor.autopairs` and `editor.surround` using the same descriptor infrastructure; share common text mutation helpers once the buffer edit APIs from the wishlist land.
+1. Implement `editor.surround` using the shared textops helpers and dot-repeat integration.
 2. Wire indent guide and colorizer plugins, emitting telemetry to the health report and adding load counters per plugin.
 3. Stand up `plugins/editor/lsp.gza` as the orchestrator for Ghostls/ZLS/RA with language-specific descriptors.
-4. Add Ghostlang regression tests for comment/autopairs/surround toggles as soon as the headless buffer harness is available (see wishlist) or via interim mock adapters.
+4. Expand the Ghostlang regression suite (surround, indent guides, colorizer) as soon as the headless buffer harness lands.
 5. Extend `extras.health` to surface per-plugin load counts and timings once two or more Phase 3 modules ship.
 
 **Risks:** Need ergonomic API surface from Zig runtime; ensure plugin manager can express load ordering and dependencies.
