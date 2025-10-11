@@ -5,31 +5,14 @@ const std = @import("std");
 const zlog = @import("zlog");
 const grim = @import("grim");
 
+const CommandRegistry = @import("command_registry.zig").CommandRegistry;
+const KeymapManager = @import("keymap_manager.zig").KeymapManager;
+const EventSystem = @import("event_system.zig").EventSystem;
+const ThemeManager = @import("theme_manager.zig").ThemeManager;
+const LSPManager = @import("lsp_manager.zig").LSPManager;
+const SyntaxHighlighter = @import("syntax_highlighter.zig").SyntaxHighlighter;
+
 const Host = grim.host.Host;
-
-/// Optional integration point for command registration.
-pub const CommandRegistrar = struct {
-    ctx: *anyopaque,
-    registerFn: *const fn (ctx: *anyopaque, action: *const Host.CommandAction) anyerror!void,
-};
-
-/// Optional integration point for keymap registration.
-pub const KeymapRegistrar = struct {
-    ctx: *anyopaque,
-    registerFn: *const fn (ctx: *anyopaque, action: *const Host.KeymapAction) anyerror!void,
-};
-
-/// Optional integration point for event handler registration.
-pub const EventRegistrar = struct {
-    ctx: *anyopaque,
-    registerFn: *const fn (ctx: *anyopaque, action: *const Host.EventAction) anyerror!void,
-};
-
-/// Optional integration point for theme/highlight registration.
-pub const ThemeRegistrar = struct {
-    ctx: *anyopaque,
-    registerFn: *const fn (ctx: *anyopaque, action: *const Host.ThemeAction) anyerror!void,
-};
 
 /// Optional sink for plugin-generated messages.
 pub const MessageSink = struct {
@@ -40,10 +23,12 @@ pub const MessageSink = struct {
 /// Adapter passed to grim's Host.ActionCallbacks.
 pub const PhantomPluginHost = struct {
     allocator: std.mem.Allocator,
-    command_registrar: ?CommandRegistrar = null,
-    keymap_registrar: ?KeymapRegistrar = null,
-    event_registrar: ?EventRegistrar = null,
-    theme_registrar: ?ThemeRegistrar = null,
+    command_registry: ?*CommandRegistry = null,
+    keymap_manager: ?*KeymapManager = null,
+    event_system: ?*EventSystem = null,
+    theme_manager: ?*ThemeManager = null,
+    lsp_manager: ?*LSPManager = null,
+    syntax_highlighter: ?*SyntaxHighlighter = null,
     message_sink: ?MessageSink = null,
 
     pub fn init(allocator: std.mem.Allocator) PhantomPluginHost {
@@ -51,44 +36,62 @@ pub const PhantomPluginHost = struct {
     }
 
     pub fn deinit(self: *PhantomPluginHost) void {
-        self.command_registrar = null;
-        self.keymap_registrar = null;
-        self.event_registrar = null;
-        self.theme_registrar = null;
+        self.command_registry = null;
+        self.keymap_manager = null;
+        self.event_system = null;
+        self.theme_manager = null;
+        self.lsp_manager = null;
+        self.syntax_highlighter = null;
         self.message_sink = null;
         self.allocator = undefined;
     }
 
-    pub fn setCommandRegistrar(self: *PhantomPluginHost, registrar: CommandRegistrar) void {
-        self.command_registrar = registrar;
+    pub fn setCommandRegistry(self: *PhantomPluginHost, registry: *CommandRegistry) void {
+        self.command_registry = registry;
     }
 
-    pub fn clearCommandRegistrar(self: *PhantomPluginHost) void {
-        self.command_registrar = null;
+    pub fn clearCommandRegistry(self: *PhantomPluginHost) void {
+        self.command_registry = null;
     }
 
-    pub fn setKeymapRegistrar(self: *PhantomPluginHost, registrar: KeymapRegistrar) void {
-        self.keymap_registrar = registrar;
+    pub fn setKeymapManager(self: *PhantomPluginHost, manager: *KeymapManager) void {
+        self.keymap_manager = manager;
     }
 
-    pub fn clearKeymapRegistrar(self: *PhantomPluginHost) void {
-        self.keymap_registrar = null;
+    pub fn clearKeymapManager(self: *PhantomPluginHost) void {
+        self.keymap_manager = null;
     }
 
-    pub fn setEventRegistrar(self: *PhantomPluginHost, registrar: EventRegistrar) void {
-        self.event_registrar = registrar;
+    pub fn setEventSystem(self: *PhantomPluginHost, system: *EventSystem) void {
+        self.event_system = system;
     }
 
-    pub fn clearEventRegistrar(self: *PhantomPluginHost) void {
-        self.event_registrar = null;
+    pub fn clearEventSystem(self: *PhantomPluginHost) void {
+        self.event_system = null;
     }
 
-    pub fn setThemeRegistrar(self: *PhantomPluginHost, registrar: ThemeRegistrar) void {
-        self.theme_registrar = registrar;
+    pub fn setThemeManager(self: *PhantomPluginHost, manager: *ThemeManager) void {
+        self.theme_manager = manager;
     }
 
-    pub fn clearThemeRegistrar(self: *PhantomPluginHost) void {
-        self.theme_registrar = null;
+    pub fn clearThemeManager(self: *PhantomPluginHost) void {
+        self.theme_manager = null;
+    }
+
+    pub fn setLSPManager(self: *PhantomPluginHost, manager: *LSPManager) void {
+        self.lsp_manager = manager;
+    }
+
+    pub fn clearLSPManager(self: *PhantomPluginHost) void {
+        self.lsp_manager = null;
+    }
+
+    pub fn setSyntaxHighlighter(self: *PhantomPluginHost, highlighter: *SyntaxHighlighter) void {
+        self.syntax_highlighter = highlighter;
+    }
+
+    pub fn clearSyntaxHighlighter(self: *PhantomPluginHost) void {
+        self.syntax_highlighter = null;
     }
 
     pub fn setMessageSink(self: *PhantomPluginHost, sink: MessageSink) void {
@@ -104,10 +107,10 @@ pub const PhantomPluginHost = struct {
         return .{
             .ctx = @as(*anyopaque, @ptrCast(self)),
             .show_message = adapterShowMessage,
-            .register_command = if (self.command_registrar != null) adapterRegisterCommand else null,
-            .register_keymap = if (self.keymap_registrar != null) adapterRegisterKeymap else null,
-            .register_event_handler = if (self.event_registrar != null) adapterRegisterEvent else null,
-            .register_theme = if (self.theme_registrar != null) adapterRegisterTheme else null,
+            .register_command = adapterRegisterCommand,
+            .register_keymap = adapterRegisterKeymap,
+            .register_event_handler = adapterRegisterEvent,
+            .register_theme = adapterRegisterTheme,
         };
     }
 
@@ -122,38 +125,59 @@ pub const PhantomPluginHost = struct {
 
     fn adapterRegisterCommand(ctx: *anyopaque, action: *const Host.CommandAction) anyerror!void {
         const self = selfFromCtx(ctx);
-        if (self.command_registrar) |registrar| {
-            try registrar.registerFn(registrar.ctx, action);
+        if (self.command_registry) |registry| {
+            registry.register(action) catch |err| {
+                zlog.err("Failed to register command {s}: {s}", .{ action.name, @errorName(err) });
+                return err;
+            };
             return;
         }
-        zlog.warn("Plugin attempted to register command without registrar: {s}", .{action.name});
+        zlog.warn("Plugin attempted to register command without registry: {s}", .{action.name});
+        return error.CommandRegistryUnavailable;
     }
 
     fn adapterRegisterKeymap(ctx: *anyopaque, action: *const Host.KeymapAction) anyerror!void {
         const self = selfFromCtx(ctx);
-        if (self.keymap_registrar) |registrar| {
-            try registrar.registerFn(registrar.ctx, action);
+        const mode = action.mode orelse "";
+        const keys = action.keys;
+        if (self.keymap_manager) |manager| {
+            manager.register(action) catch |err| {
+                zlog.err(
+                    "Failed to register keymap {s}:{s}: {s}",
+                    .{ mode, keys, @errorName(err) },
+                );
+                return err;
+            };
             return;
         }
-        zlog.warn("Plugin attempted to register keymap without registrar: {s}", .{action.keys});
+        zlog.warn("Plugin attempted to register keymap without manager: {s}", .{keys});
+        return error.KeymapManagerUnavailable;
     }
 
     fn adapterRegisterEvent(ctx: *anyopaque, action: *const Host.EventAction) anyerror!void {
         const self = selfFromCtx(ctx);
-        if (self.event_registrar) |registrar| {
-            try registrar.registerFn(registrar.ctx, action);
+        if (self.event_system) |system| {
+            system.register(action) catch |err| {
+                zlog.err("Failed to register event handler {s}: {s}", .{ action.event, @errorName(err) });
+                return err;
+            };
             return;
         }
-        zlog.warn("Plugin attempted to register event handler without registrar: {s}", .{action.event});
+        zlog.warn("Plugin attempted to register event handler without system: {s}", .{action.event});
+        return error.EventSystemUnavailable;
     }
 
     fn adapterRegisterTheme(ctx: *anyopaque, action: *const Host.ThemeAction) anyerror!void {
         const self = selfFromCtx(ctx);
-        if (self.theme_registrar) |registrar| {
-            try registrar.registerFn(registrar.ctx, action);
+        if (self.theme_manager) |manager| {
+            manager.register(action) catch |err| {
+                zlog.err("Failed to register theme {s}: {s}", .{ action.name, @errorName(err) });
+                return err;
+            };
             return;
         }
-        zlog.warn("Plugin attempted to register theme entry without registrar: {s}", .{action.name});
+        zlog.warn("Plugin attempted to register theme entry without manager: {s}", .{action.name});
+        return error.ThemeManagerUnavailable;
     }
 
     fn selfFromCtx(ctx: *anyopaque) *PhantomPluginHost {

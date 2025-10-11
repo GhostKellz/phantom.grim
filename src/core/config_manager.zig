@@ -9,6 +9,11 @@ const PluginLoader = plugin_loader_mod.PluginLoader;
 const PluginConfig = plugin_loader_mod.PluginConfig;
 const GhostlangRuntime = @import("ghostlang_runtime.zig").GhostlangRuntime;
 const LSPManager = @import("lsp_manager.zig").LSPManager;
+const CommandRegistry = @import("command_registry.zig").CommandRegistry;
+const KeymapManager = @import("keymap_manager.zig").KeymapManager;
+const EventSystem = @import("event_system.zig").EventSystem;
+const ThemeManager = @import("theme_manager.zig").ThemeManager;
+const SyntaxHighlighter = @import("syntax_highlighter.zig").SyntaxHighlighter;
 
 fn appendJsonString(buffer: *std.ArrayList(u8), allocator: std.mem.Allocator, value: []const u8) !void {
     const hex_digits = "0123456789abcdef";
@@ -566,6 +571,11 @@ pub const ConfigManager = struct {
     theme: Theme,
     plugin_lock: PluginLock,
     lsp_manager: *LSPManager,
+    command_registry: CommandRegistry,
+    keymap_manager: KeymapManager,
+    event_system: EventSystem,
+    theme_manager: ThemeManager,
+    syntax_highlighter: SyntaxHighlighter,
 
     pub fn init(allocator: std.mem.Allocator, config_dir: []const u8) !ConfigManager {
         // Initialize Flare config
@@ -599,6 +609,10 @@ pub const ConfigManager = struct {
         const lsp_manager = try LSPManager.init(allocator);
         errdefer lsp_manager.deinit();
 
+        var syntax_highlighter = try SyntaxHighlighter.init(allocator);
+        var syntax_highlighter_cleanup = true;
+        defer if (syntax_highlighter_cleanup) syntax_highlighter.deinit();
+
         var theme = Theme.init(allocator);
         errdefer theme.deinit();
         try theme.applyDefaults();
@@ -613,8 +627,22 @@ pub const ConfigManager = struct {
             .theme = theme,
             .plugin_lock = PluginLock.init(allocator),
             .lsp_manager = lsp_manager,
+            .command_registry = CommandRegistry.init(allocator),
+            .keymap_manager = KeymapManager.init(allocator),
+            .event_system = EventSystem.init(allocator),
+            .theme_manager = ThemeManager.init(allocator),
+            .syntax_highlighter = syntax_highlighter,
         };
         errdefer manager.plugin_lock.deinit();
+
+        syntax_highlighter_cleanup = false;
+
+        manager.plugin_loader.host_adapter.setCommandRegistry(&manager.command_registry);
+        manager.plugin_loader.host_adapter.setKeymapManager(&manager.keymap_manager);
+        manager.plugin_loader.host_adapter.setEventSystem(&manager.event_system);
+        manager.plugin_loader.host_adapter.setThemeManager(&manager.theme_manager);
+        manager.plugin_loader.host_adapter.setLSPManager(manager.lsp_manager);
+        manager.plugin_loader.host_adapter.setSyntaxHighlighter(&manager.syntax_highlighter);
 
         manager.loadLockfile() catch |err| {
             zlog.warn("Failed to load plugin lockfile: {any}", .{err});
@@ -625,6 +653,11 @@ pub const ConfigManager = struct {
 
     pub fn deinit(self: *ConfigManager) void {
         self.plugin_lock.deinit();
+        self.syntax_highlighter.deinit();
+        self.theme_manager.deinit();
+        self.event_system.deinit();
+        self.keymap_manager.deinit();
+        self.command_registry.deinit();
         self.theme.deinit();
         self.lsp_manager.deinit();
         self.plugin_loader.deinit();
@@ -901,6 +934,26 @@ pub const ConfigManager = struct {
 
     pub fn themeRef(self: *ConfigManager) *Theme {
         return &self.theme;
+    }
+
+    pub fn syntaxHighlighter(self: *ConfigManager) *SyntaxHighlighter {
+        return &self.syntax_highlighter;
+    }
+
+    pub fn commandRegistry(self: *ConfigManager) *CommandRegistry {
+        return &self.command_registry;
+    }
+
+    pub fn keymapManager(self: *ConfigManager) *KeymapManager {
+        return &self.keymap_manager;
+    }
+
+    pub fn eventSystem(self: *ConfigManager) *EventSystem {
+        return &self.event_system;
+    }
+
+    pub fn themeManager(self: *ConfigManager) *ThemeManager {
+        return &self.theme_manager;
     }
 
     pub fn tokenColor(self: *ConfigManager, token: []const u8) []const u8 {

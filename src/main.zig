@@ -93,8 +93,7 @@ pub fn main() !void {
     defer config_manager.deinit();
     config.setGlobalManager(&config_manager);
 
-    var syntax_highlighter = try SyntaxHighlighter.init(allocator);
-    defer syntax_highlighter.deinit();
+    const syntax_highlighter = config_manager.syntaxHighlighter();
 
     // Load all configurations
     try config_manager.loadConfiguration();
