@@ -664,4 +664,4 @@ A: Full Vim modal editing is core. Grim motions extend Vim with modern features.
 
 ---
 
-**Built with ❤️ by the Grim community**
+**Built with Zig**

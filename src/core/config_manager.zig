@@ -8,6 +8,7 @@ const plugin_loader_mod = @import("plugin_loader.zig");
 const PluginLoader = plugin_loader_mod.PluginLoader;
 const PluginConfig = plugin_loader_mod.PluginConfig;
 const GhostlangRuntime = @import("ghostlang_runtime.zig").GhostlangRuntime;
+const LSPManager = @import("lsp_manager.zig").LSPManager;
 
 fn appendJsonString(buffer: *std.ArrayList(u8), allocator: std.mem.Allocator, value: []const u8) !void {
     const hex_digits = "0123456789abcdef";
@@ -62,6 +63,11 @@ pub fn globalManager() ?*ConfigManager {
     return global_manager;
 }
 
+fn globalLspManager() ?*LSPManager {
+    const manager = global_manager orelse return null;
+    return manager.lsp_manager;
+}
+
 fn sliceFromCString(ptr: [*:0]const u8) []const u8 {
     return std.mem.span(ptr);
 }
@@ -108,6 +114,161 @@ pub export fn grim_plugin_update(name_ptr: [*:0]const u8, version_ptr: [*:0]cons
     };
 
     return true;
+}
+
+pub export fn grim_lsp_start(language_ptr: [*:0]const u8, server_ptr: [*:0]const u8) bool {
+    const lsp_manager = globalLspManager() orelse {
+        zlog.err("grim_lsp_start called without ConfigManager", .{});
+        return false;
+    };
+
+    const language = sliceFromCString(language_ptr);
+    const server = sliceFromCString(server_ptr);
+
+    if (language.len == 0 or server.len == 0) {
+        zlog.warn("grim_lsp_start requires language and server", .{});
+        return false;
+    }
+
+    _ = lsp_manager.ensureLanguage(language, server) catch |err| {
+        zlog.err("Failed to ensure LSP {s}->{s}: {any}", .{ language, server, err });
+        return false;
+    };
+
+    return true;
+}
+
+pub export fn grim_lsp_did_open(path_ptr: [*:0]const u8, language_ptr: [*:0]const u8, content_ptr: [*:0]const u8) bool {
+    const lsp_manager = globalLspManager() orelse {
+        zlog.err("grim_lsp_did_open called without ConfigManager", .{});
+        return false;
+    };
+
+    const path = sliceFromCString(path_ptr);
+    const language = sliceFromCString(language_ptr);
+    const content = sliceFromCString(content_ptr);
+
+    if (path.len == 0 or language.len == 0) {
+        zlog.warn("grim_lsp_did_open requires path and language", .{});
+        return false;
+    }
+
+    lsp_manager.didOpen(language, path, content) catch |err| {
+        zlog.err("Failed to open document {s} ({s}): {any}", .{ path, language, err });
+        return false;
+    };
+
+    return true;
+}
+
+pub export fn grim_lsp_did_change(path_ptr: [*:0]const u8, content_ptr: [*:0]const u8) bool {
+    const lsp_manager = globalLspManager() orelse {
+        zlog.err("grim_lsp_did_change called without ConfigManager", .{});
+        return false;
+    };
+
+    const path = sliceFromCString(path_ptr);
+    const content = sliceFromCString(content_ptr);
+
+    if (path.len == 0) {
+        zlog.warn("grim_lsp_did_change requires path", .{});
+        return false;
+    }
+
+    lsp_manager.didChange(path, content) catch |err| {
+        zlog.err("Failed to send change for {s}: {any}", .{ path, err });
+        return false;
+    };
+
+    return true;
+}
+
+pub export fn grim_lsp_did_close(path_ptr: [*:0]const u8) bool {
+    const lsp_manager = globalLspManager() orelse {
+        zlog.err("grim_lsp_did_close called without ConfigManager", .{});
+        return false;
+    };
+
+    const path = sliceFromCString(path_ptr);
+    if (path.len == 0) {
+        zlog.warn("grim_lsp_did_close requires path", .{});
+        return false;
+    }
+
+    lsp_manager.didClose(path) catch |err| {
+        zlog.err("Failed to close document {s}: {any}", .{ path, err });
+        return false;
+    };
+
+    return true;
+}
+
+pub export fn grim_lsp_request_completion(path_ptr: [*:0]const u8, line: u32, character: u32) ?[*]const u8 {
+    const lsp_manager = globalLspManager() orelse return null;
+    const path = sliceFromCString(path_ptr);
+    if (path.len == 0) return null;
+
+    const response = lsp_manager.requestCompletion(path, line, character) catch |err| {
+        zlog.err("Completion request failed for {s}: {any}", .{ path, err });
+        return null;
+    };
+    defer lsp_manager.allocator.free(response);
+
+    return lsp_manager.writeResponse(response) catch |err| {
+        zlog.err("Failed to stage completion response: {any}", .{err});
+        return null;
+    };
+}
+
+pub export fn grim_lsp_request_hover(path_ptr: [*:0]const u8, line: u32, character: u32) ?[*]const u8 {
+    const lsp_manager = globalLspManager() orelse return null;
+    const path = sliceFromCString(path_ptr);
+    if (path.len == 0) return null;
+
+    const response = lsp_manager.requestHover(path, line, character) catch |err| {
+        zlog.err("Hover request failed for {s}: {any}", .{ path, err });
+        return null;
+    };
+    defer lsp_manager.allocator.free(response);
+
+    return lsp_manager.writeResponse(response) catch |err| {
+        zlog.err("Failed to stage hover response: {any}", .{err});
+        return null;
+    };
+}
+
+pub export fn grim_lsp_request_definition(path_ptr: [*:0]const u8, line: u32, character: u32) ?[*]const u8 {
+    const lsp_manager = globalLspManager() orelse return null;
+    const path = sliceFromCString(path_ptr);
+    if (path.len == 0) return null;
+
+    const response = lsp_manager.requestDefinition(path, line, character) catch |err| {
+        zlog.err("Definition request failed for {s}: {any}", .{ path, err });
+        return null;
+    };
+    defer lsp_manager.allocator.free(response);
+
+    return lsp_manager.writeResponse(response) catch |err| {
+        zlog.err("Failed to stage definition response: {any}", .{err});
+        return null;
+    };
+}
+
+pub export fn grim_lsp_request_diagnostics(path_ptr: [*:0]const u8) ?[*]const u8 {
+    const lsp_manager = globalLspManager() orelse return null;
+    const path = sliceFromCString(path_ptr);
+    if (path.len == 0) return null;
+
+    const response = lsp_manager.requestDiagnostics(path) catch |err| {
+        zlog.err("Diagnostics request failed for {s}: {any}", .{ path, err });
+        return null;
+    };
+    defer lsp_manager.allocator.free(response);
+
+    return lsp_manager.writeResponse(response) catch |err| {
+        zlog.err("Failed to stage diagnostics response: {any}", .{err});
+        return null;
+    };
 }
 
 pub const HighlightSet = struct {
@@ -404,6 +565,7 @@ pub const ConfigManager = struct {
     plugin_dir: []const u8,
     theme: Theme,
     plugin_lock: PluginLock,
+    lsp_manager: *LSPManager,
 
     pub fn init(allocator: std.mem.Allocator, config_dir: []const u8) !ConfigManager {
         // Initialize Flare config
@@ -434,6 +596,9 @@ pub const ConfigManager = struct {
         const plugin_loader = try PluginLoader.init(allocator, loader_config);
         errdefer plugin_loader.deinit();
 
+        const lsp_manager = try LSPManager.init(allocator);
+        errdefer lsp_manager.deinit();
+
         var theme = Theme.init(allocator);
         errdefer theme.deinit();
         try theme.applyDefaults();
@@ -447,6 +612,7 @@ pub const ConfigManager = struct {
             .plugin_dir = plugin_dir,
             .theme = theme,
             .plugin_lock = PluginLock.init(allocator),
+            .lsp_manager = lsp_manager,
         };
         errdefer manager.plugin_lock.deinit();
 
@@ -460,6 +626,7 @@ pub const ConfigManager = struct {
     pub fn deinit(self: *ConfigManager) void {
         self.plugin_lock.deinit();
         self.theme.deinit();
+        self.lsp_manager.deinit();
         self.plugin_loader.deinit();
         self.ghostlang_runtime.deinit();
         self.flare_config.deinit();

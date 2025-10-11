@@ -1,0 +1,55 @@
+-- plugins/lsp/config.gza
+-- Auto-configure core language servers via Grim's native LSP client.
+
+local lsp = require("phantom.lsp")
+
+local plugin = {
+    name = "lsp.config",
+    state = {
+        servers = {},
+    },
+}
+
+local default_servers = {
+    ghostlang = {
+        server = "ghostls",
+    },
+    zig = {
+        server = "zls",
+    },
+    rust = {
+        server = "rust-analyzer",
+    },
+}
+
+local function merge_servers(overrides)
+    local merged = {}
+    for language, spec in pairs(default_servers) do
+        merged[language] = spec
+    end
+    if type(overrides) == "table" then
+        for language, spec in pairs(overrides) do
+            merged[language] = spec
+        end
+    end
+    return merged
+end
+
+function plugin.setup(opts)
+    opts = opts or {}
+    local servers = merge_servers(opts.servers)
+    lsp.ensure(servers)
+    plugin.state.servers = servers
+
+    if opts.ensure then
+        for _, language in ipairs(opts.ensure) do
+            if type(language) == "string" then
+                lsp.start(language, servers[language] and servers[language].server)
+            end
+        end
+    end
+
+    return plugin
+end
+
+return plugin

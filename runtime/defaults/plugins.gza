@@ -22,3 +22,8 @@ phantom.lazy({
         { mode = "i", lhs = "`" },
     },
 })
+
+phantom.lazy({
+    name = "lsp.config",
+    event = { "BufReadPost", "BufNewFile" },
+})

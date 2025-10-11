@@ -49,7 +49,7 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
         .@"export-test-harness" = true, // Enable TestHarness export
-        .ghostlang = true,               // Enable Ghostlang support
+        .ghostlang = true, // Enable Ghostlang support
     });
 
     // Get grim modules for phantom.grim integration

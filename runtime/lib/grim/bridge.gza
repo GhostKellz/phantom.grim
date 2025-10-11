@@ -52,6 +52,14 @@ local symbol_aliases = {
     zap_detect_issues = { "grim_zap_detect_issues" },
     plugin_install = { "grim_plugin_install" },
     plugin_update = { "grim_plugin_update" },
+    lsp_start = { "grim_lsp_start" },
+    lsp_did_open = { "grim_lsp_did_open" },
+    lsp_did_change = { "grim_lsp_did_change" },
+    lsp_did_close = { "grim_lsp_did_close" },
+    lsp_completion = { "grim_lsp_request_completion" },
+    lsp_hover = { "grim_lsp_request_hover" },
+    lsp_definition = { "grim_lsp_request_definition" },
+    lsp_diagnostics = { "grim_lsp_request_diagnostics" },
 }
 
 local keyword_sets = {
@@ -649,6 +657,38 @@ function bridge.plugin_update(name, version)
     local plugin_version = version or ""
     local ok = call_alias("plugin_update", plugin_name, plugin_version)
     return ok and true or false
+end
+
+function bridge.lsp_start(language, server)
+    return call_alias("lsp_start", language or "", server or "")
+end
+
+function bridge.lsp_open(path, language, content)
+    return call_alias("lsp_did_open", path or "", language or "", content or "")
+end
+
+function bridge.lsp_change(path, content)
+    return call_alias("lsp_did_change", path or "", content or "")
+end
+
+function bridge.lsp_close(path)
+    return call_alias("lsp_did_close", path or "")
+end
+
+function bridge.lsp_completion(path, line, character)
+    return call_alias("lsp_completion", path or "", line or 0, character or 0)
+end
+
+function bridge.lsp_hover(path, line, character)
+    return call_alias("lsp_hover", path or "", line or 0, character or 0)
+end
+
+function bridge.lsp_definition(path, line, character)
+    return call_alias("lsp_definition", path or "", line or 0, character or 0)
+end
+
+function bridge.lsp_diagnostics(path)
+    return call_alias("lsp_diagnostics", path or "")
 end
 
 function bridge.__debug_set_ffi(mock)
