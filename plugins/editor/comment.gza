@@ -1,18 +1,13 @@
 -- plugins/editor/comment.gza
 -- Lightweight comment toggling helpers with lazy-load friendly commands.
 
-local core = require("core")
+local textops = require("plugins.editor.textops")
 
 local plugin = {
     name = "comment",
     state = {
-        adapter = nil,
-        scratch = {
-            lines = { "" },
-            filetype = "default",
-            cursor = 1,
-        },
         commands_registered = false,
+        last_repeat = nil,
     },
 }
 
@@ -43,139 +38,6 @@ end
 
 local function escape_pattern(text)
     return (text or ""):gsub("(%W)", "%%%1")
-end
-
-local function clone_lines(lines)
-    local copy = {}
-    for index, value in ipairs(lines or {}) do
-        copy[index] = value
-    end
-    return copy
-end
-
-local function call_bridge(method, ...)
-    local bridge = core.bridge and core.bridge()
-    if type(bridge) == "table" then
-        local fn = bridge[method]
-        if type(fn) == "function" then
-            local ok, result = pcall(fn, ...)
-            if ok then
-                return result
-            end
-        end
-    end
-    return nil
-end
-
-local function ensure_scratch()
-    local scratch = plugin.state.scratch
-    scratch.lines = scratch.lines or { "" }
-    scratch.filetype = scratch.filetype or "default"
-    scratch.cursor = scratch.cursor or 1
-    return scratch
-end
-
-local function make_adapter()
-    local adapter = {}
-
-    function adapter.filetype()
-        local ft = call_bridge("buffer_filetype")
-        if type(ft) == "string" and #ft > 0 then
-            return ft
-        end
-        local getter = rawget(_G, "buffer_filetype")
-        if type(getter) == "function" then
-            local ok, value = pcall(getter)
-            if ok and type(value) == "string" and #value > 0 then
-                return value
-            end
-        end
-        return ensure_scratch().filetype
-    end
-
-    function adapter.cursor_line()
-        local cursor = call_bridge("buffer_cursor")
-        if type(cursor) == "table" and type(cursor.line) == "number" then
-            return cursor.line
-        elseif type(cursor) == "number" then
-            return cursor
-        end
-        local getter = rawget(_G, "buffer_cursor")
-        if type(getter) == "function" then
-            local ok, value = pcall(getter)
-            if ok then
-                if type(value) == "table" and type(value.line) == "number" then
-                    return value.line
-                elseif type(value) == "number" then
-                    return value
-                end
-            end
-        end
-        return ensure_scratch().cursor
-    end
-
-    function adapter.set_cursor(line)
-        if type(line) ~= "number" then
-            return
-        end
-        local setter = rawget(_G, "buffer_set_cursor")
-        if type(setter) == "function" then
-            local ok = pcall(setter, line)
-            if ok then
-                return
-            end
-        end
-        ensure_scratch().cursor = line
-    end
-
-    function adapter.get_lines(start_line, end_line)
-        local lines = call_bridge("buffer_get_lines", start_line, end_line)
-        if type(lines) == "table" then
-            return lines
-        end
-        local getter = rawget(_G, "buffer_get_lines")
-        if type(getter) == "function" then
-            local ok, value = pcall(getter, start_line, end_line)
-            if ok and type(value) == "table" then
-                return value
-            end
-        end
-
-        local scratch = ensure_scratch()
-        local result = {}
-        for line = start_line, end_line do
-            result[#result + 1] = scratch.lines[line] or ""
-        end
-        return result
-    end
-
-    function adapter.set_lines(start_line, end_line, lines)
-        local setter = rawget(_G, "buffer_set_lines")
-        if type(setter) == "function" then
-            local ok = pcall(setter, start_line, end_line, lines)
-            if ok then
-                return true
-            end
-        end
-
-        local scratch = ensure_scratch()
-        for index = end_line, start_line, -1 do
-            table.remove(scratch.lines, index)
-        end
-        for offset = 1, #(lines or {}) do
-            table.insert(scratch.lines, start_line + offset - 1, lines[offset])
-        end
-        return true
-    end
-
-    return adapter
-end
-
-local function adapter()
-    if not plugin.state.adapter then
-        plugin.state.adapter = make_adapter()
-    end
-    return plugin.state.adapter
 end
 
 local function resolve_comment_tokens(filetype)
@@ -222,9 +84,9 @@ local function toggle_line(line_nr)
         return false
     end
 
-    local tokens = resolve_comment_tokens(adapter().filetype())
+    local tokens = resolve_comment_tokens(textops.filetype())
     local new_line, action = toggle_line_text(line, tokens.line)
-    adapter().set_lines(line_nr, line_nr, { new_line })
+    textops.set_line(line_nr, new_line)
     return action == "comment", action
 end
 
@@ -233,7 +95,7 @@ local function toggle_block_lines(start_line, end_line)
         start_line, end_line = end_line, start_line
     end
 
-    local tokens = resolve_comment_tokens(adapter().filetype())
+    local tokens = resolve_comment_tokens(textops.filetype())
     local block_tokens = tokens.block
     if not block_tokens or #block_tokens < 2 then
         local changed = false
@@ -244,7 +106,7 @@ local function toggle_block_lines(start_line, end_line)
         return changed and "comment" or "uncomment"
     end
 
-    local lines = adapter().get_lines(start_line, end_line)
+    local lines = textops.get_lines(start_line, end_line)
     if #lines == 0 then
         return "noop"
     end
@@ -259,7 +121,7 @@ local function toggle_block_lines(start_line, end_line)
         for index = 2, #lines - 1 do
             new_lines[#new_lines + 1] = lines[index]
         end
-        adapter().set_lines(start_line, end_line, new_lines)
+        textops.replace_lines(start_line, end_line, new_lines)
         return "uncomment"
     end
 
@@ -272,7 +134,7 @@ local function toggle_block_lines(start_line, end_line)
     end
     new_lines[#new_lines + 1] = end_indent .. end_token
 
-    adapter().set_lines(start_line, end_line, new_lines)
+    textops.replace_lines(start_line, end_line, new_lines)
     return "comment"
 end
 
@@ -318,63 +180,108 @@ local function register_commands()
 
     register_command("CommentToggle", function(ctx)
         local args = parse_args(ctx)
-        local line = tonumber(args[1]) or adapter().cursor_line()
+        local line = tonumber(args[1]) or select(1, textops.cursor())
         local _, action = toggle_line(line)
         log(string.format("line %d %s", line, action))
     end, "Toggle comment for current line")
 
     register_command("CommentLine", function(ctx)
         local args = parse_args(ctx)
-        local target = tonumber(args[1]) or adapter().cursor_line()
+        local target = tonumber(args[1]) or select(1, textops.cursor())
         toggle_line(target)
     end, "Toggle comment on a specific line")
 
     register_command("CommentBlock", function(ctx)
         local args = parse_args(ctx)
-        local start_line = tonumber(args[1]) or adapter().cursor_line()
+        local start_line = tonumber(args[1]) or select(1, textops.cursor())
         local end_line = tonumber(args[2]) or start_line
         local action = toggle_block_lines(start_line, end_line)
         log(string.format("block %d-%d %s", start_line, end_line, action))
     end, "Toggle block comments over a range")
 
+    register_command("CommentRepeat", function()
+        if type(plugin.state.last_repeat) == "function" then
+            plugin.state.last_repeat()
+        end
+    end, "Repeat last comment action")
+
     plugin.state.commands_registered = true
 end
 
+local function record_repeat(kind, action)
+    local operator_api = textops.operator_api()
+    if operator_api then
+        if type(operator_api.recordOperation) == "function" then
+            local ok = pcall(operator_api.recordOperation, operator_api, kind, action.range or {}, action.result or "", 1, nil)
+            if ok then
+                plugin.state.last_repeat = function()
+                    pcall(action.callback)
+                end
+                return
+            end
+        elseif type(operator_api.record_operation) == "function" then
+            local ok = pcall(operator_api.record_operation, operator_api, kind, action.range or {}, action.result or "", 1, nil)
+            if ok then
+                plugin.state.last_repeat = function()
+                    pcall(action.callback)
+                end
+                return
+            end
+        end
+    end
+
+    plugin.state.last_repeat = function()
+        pcall(action.callback)
+    end
+end
+
 function plugin.toggle_line(line)
-    local target = tonumber(line) or adapter().cursor_line()
-    return toggle_line(target)
+    local target = tonumber(line) or select(1, textops.cursor())
+    local _, action = toggle_line(target)
+    record_repeat("comment-line", {
+        range = { line = target },
+        result = action,
+        callback = function()
+            toggle_line(target)
+        end,
+    })
 end
 
 function plugin.toggle_block(start_line, end_line)
-    return toggle_block_lines(tonumber(start_line) or adapter().cursor_line(), tonumber(end_line) or adapter().cursor_line())
+    local line = tonumber(start_line) or select(1, textops.cursor())
+    local finish = tonumber(end_line) or select(1, textops.cursor())
+    local action = toggle_block_lines(line, finish)
+    record_repeat("comment-block", {
+        range = { start = line, finish = finish },
+        result = action,
+        callback = function()
+            toggle_block_lines(line, finish)
+        end,
+    })
 end
 
 function plugin.configure(opts)
     opts = opts or {}
-    if opts.adapter and type(opts.adapter) == "table" then
-        plugin.state.adapter = opts.adapter
-    end
     if opts.scratch then
-        plugin.set_scratch(opts.scratch)
+        textops.set_scratch(opts.scratch)
+    end
+    if opts.filetype then
+        textops.set_filetype(opts.filetype)
     end
     register_commands()
     return plugin
 end
 
 function plugin.set_scratch(opts)
-    local scratch = ensure_scratch()
-    if opts.lines then
-        scratch.lines = clone_lines(opts.lines)
-    end
-    scratch.filetype = opts.filetype or scratch.filetype
-    scratch.cursor = opts.cursor or scratch.cursor
-    return scratch
+    return textops.set_scratch(opts)
 end
 
 function plugin.summary()
+    local line, col = textops.cursor()
     return {
-        filetype = adapter().filetype(),
-        cursor = adapter().cursor_line(),
+        filetype = textops.filetype(),
+        cursor_line = line,
+        cursor_col = col,
     }
 end
 

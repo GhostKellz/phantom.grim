@@ -9,3 +9,16 @@ phantom.lazy({
         { "v", "gc", ":CommentBlock<CR>", "Toggle selection comment" },
     },
 })
+
+phantom.lazy({
+    name = "editor.autopairs",
+    event = { "InsertEnter" },
+    keys = {
+        { mode = "i", lhs = "(" },
+        { mode = "i", lhs = "[" },
+        { mode = "i", lhs = "{" },
+        { mode = "i", lhs = "'" },
+        { mode = "i", lhs = '"' },
+        { mode = "i", lhs = "`" },
+    },
+})

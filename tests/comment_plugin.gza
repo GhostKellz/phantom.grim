@@ -1,0 +1,85 @@
+-- tests/comment_plugin.gza
+-- Regression tests for plugins/editor/comment.gza using the textops fallback layer.
+
+local commands = {}
+
+command = function(name, fn, opts)
+    commands[name] = fn
+    return true
+end
+
+map = function()
+    return true
+end
+
+autocmd = function()
+    return true
+end
+
+print = function() end
+
+local textops = require("plugins.editor.textops")
+textops.reset()
+
+local comment = require("plugins.editor.comment")
+
+local function expect(label, condition)
+    if not condition then
+        error(label or "expectation failed")
+    end
+end
+
+local function expect_eq(label, actual, expected)
+    if actual ~= expected then
+        error(string.format("%s (expected %s, got %s)", label or "mismatch", tostring(expected), tostring(actual)))
+    end
+end
+
+local function snapshot_line(line)
+    return textops.get_line(line)
+end
+
+local function snapshot_cursor()
+    return textops.cursor()
+end
+
+local function reset_buffer(lines, filetype)
+    textops.reset()
+    comment.set_scratch({
+        lines = lines,
+        filetype = filetype or "lua",
+        cursor_line = 1,
+        cursor_col = 0,
+    })
+end
+
+-- Line toggle should add and remove the line prefix.
+reset_buffer({ "print('hello')" }, "lua")
+comment.toggle_line(1)
+expect_eq("line comment applied", snapshot_line(1), "-- print('hello')")
+comment.toggle_line(1)
+expect_eq("line comment removed", snapshot_line(1), "print('hello')")
+
+-- Block toggle wraps multi-line regions.
+reset_buffer({ "function test()", "  return 1", "end" }, "lua")
+comment.toggle_block(1, 3)
+expect_eq("block start token", snapshot_line(1), "--[[")
+expect_eq("block inner line kept", snapshot_line(2), "function test()")
+expect_eq("block tail token", snapshot_line(5), "--]]")
+
+comment.toggle_block(1, 5)
+expect_eq("block removed first line", snapshot_line(1), "function test()")
+expect_eq("block removed middle line", snapshot_line(2), "  return 1")
+
+-- Repeat command replays last action.
+reset_buffer({ "let value = 42" }, "lua")
+comment.toggle_line(1)
+commands.CommentRepeat()
+expect_eq("repeat toggled line", snapshot_line(1), "let value = 42")
+
+-- Cursor state is maintained.
+local line, col = snapshot_cursor()
+expect_eq("cursor line stays in range", line, 1)
+expect("cursor column non-negative", col >= 0)
+
+print("[PASS] comment plugin specs")

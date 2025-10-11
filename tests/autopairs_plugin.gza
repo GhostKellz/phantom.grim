@@ -1,0 +1,84 @@
+-- tests/autopairs_plugin.gza
+-- Regression tests for plugins/editor/autopairs.gza
+
+local commands = {}
+
+command = function(name, fn)
+    commands[name] = fn
+    return true
+end
+
+map = function()
+    return true
+end
+
+autocmd = function()
+    return true
+end
+
+print = function() end
+
+local textops = require("plugins.editor.textops")
+textops.reset()
+
+local autopairs = require("plugins.editor.autopairs")
+
+local function expect(label, condition)
+    if not condition then
+        error(label or "expectation failed")
+    end
+end
+
+local function expect_eq(label, actual, expected)
+    if actual ~= expected then
+        error(string.format("%s (expected %s, got %s)", label or "mismatch", tostring(expected), tostring(actual)))
+    end
+end
+
+local function reset_buffer(initial_line)
+    textops.reset()
+    textops.set_scratch({
+        lines = { initial_line or "" },
+        filetype = "lua",
+        cursor_line = 1,
+        cursor_col = 0,
+    })
+end
+
+local function snapshot()
+    return textops.state_snapshot()
+end
+
+-- Opening parenthesis inserts closing pair and positions cursor between.
+reset_buffer("")
+autopairs.handle_char("(")
+local snap = snapshot()
+expect_eq("pair inserted", snap.lines[1], "()")
+expect_eq("cursor between pair", snap.cursor_col, 1)
+
+-- Typing closing parenthesis jumps over existing closing token.
+autopairs.handle_char(")")
+snap = snapshot()
+expect_eq("cursor after closing", snap.cursor_col, 2)
+expect_eq("line unchanged", snap.lines[1], "()")
+
+-- Backspace removes pair
+reset_buffer("")
+autopairs.handle_char("(")
+autopairs.handle_backspace()
+snap = snapshot()
+expect_eq("pair removed", snap.lines[1], "")
+expect_eq("cursor reset", snap.cursor_col, 0)
+
+-- Quotes behave symmetrically
+reset_buffer("")
+autopairs.handle_char('"')
+snap = snapshot()
+expect_eq("quotes inserted", snap.lines[1], "\"\"")
+expect_eq("cursor inside quotes", snap.cursor_col, 1)
+
+autopairs.handle_char('"')
+snap = snapshot()
+expect_eq("cursor after quotes", snap.cursor_col, 2)
+
+print("[PASS] autopairs plugin specs")
