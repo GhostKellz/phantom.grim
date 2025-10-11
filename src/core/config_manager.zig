@@ -398,7 +398,7 @@ pub const ConfigManager = struct {
     flare_config: flare.Config,
     ghostlang_runtime: GhostlangRuntime,
     config_dir: []const u8,
-    plugin_loader: PluginLoader,
+    plugin_loader: *PluginLoader,
     plugin_dir: []const u8,
     theme: Theme,
     plugin_lock: PluginLock,
@@ -425,7 +425,8 @@ pub const ConfigManager = struct {
         };
 
         const default_registry = "https://registry.phantom.grim";
-        const plugin_loader = PluginLoader.init(allocator, default_registry, plugin_dir);
+        const plugin_loader = try PluginLoader.init(allocator, default_registry, plugin_dir);
+        errdefer plugin_loader.deinit();
 
         var theme = Theme.init(allocator);
         errdefer theme.deinit();
@@ -453,6 +454,7 @@ pub const ConfigManager = struct {
     pub fn deinit(self: *ConfigManager) void {
         self.plugin_lock.deinit();
         self.theme.deinit();
+        self.plugin_loader.deinit();
         self.ghostlang_runtime.deinit();
         self.flare_config.deinit();
         self.allocator.free(self.plugin_dir);
@@ -525,7 +527,7 @@ pub const ConfigManager = struct {
 
     /// Load plugin configurations
     fn loadPluginConfigs(self: *ConfigManager) !void {
-        try self.plugin_loader.loadInstalled(&self.ghostlang_runtime);
+        try self.plugin_loader.loadInstalled();
     }
 
     fn lockfilePath(self: *ConfigManager) ![]u8 {

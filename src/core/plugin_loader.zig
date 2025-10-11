@@ -7,7 +7,24 @@ const zsync = @import("zsync");
 const zlog = @import("zlog");
 const zhttp = @import("zhttp");
 const tar = std.tar;
-const GhostlangRuntime = @import("ghostlang_runtime.zig").GhostlangRuntime;
+const grim = @import("grim");
+const Runtime = grim.runtime;
+
+comptime {
+    @compileLog(@hasDecl(Runtime, "init"));
+    @compileLog(@hasDecl(Runtime, "Runtime"));
+    @compileLog(@hasDecl(Runtime, "plugin_api"));
+    for (std.meta.declarations(Runtime)) |decl| {
+        @compileLog(decl.name);
+    }
+    const runtime_plugin_loader = Runtime.plugin_loader;
+    @compileLog(@typeName(@TypeOf(runtime_plugin_loader)));
+    @compileLog(@hasDecl(runtime_plugin_loader, "PluginLoader"));
+    for (std.meta.declarations(runtime_plugin_loader)) |decl| {
+        @compileLog("runtime.plugin_loader", decl.name);
+    }
+    @compileLog(@typeName(@TypeOf(Runtime.plugin_loader.PluginLoader)));
+}
 
 fn appendJsonString(buffer: *std.ArrayList(u8), allocator: std.mem.Allocator, value: []const u8) !void {
     const hex_digits = "0123456789abcdef";
@@ -44,13 +61,29 @@ pub const PluginLoader = struct {
     allocator: std.mem.Allocator,
     registry_url: []const u8,
     plugin_dir: []const u8,
+    runtime: *Runtime,
 
-    pub fn init(allocator: std.mem.Allocator, registry_url: []const u8, plugin_dir: []const u8) PluginLoader {
-        return PluginLoader{
+    pub fn init(allocator: std.mem.Allocator, registry_url: []const u8, plugin_dir: []const u8) !*PluginLoader {
+        var runtime_instance = try Runtime.init(allocator);
+        errdefer runtime_instance.deinit();
+
+        const runtime_ptr = try allocator.create(Runtime);
+        runtime_ptr.* = runtime_instance;
+
+        const loader = try allocator.create(PluginLoader);
+        loader.* = .{
             .allocator = allocator,
             .registry_url = registry_url,
             .plugin_dir = plugin_dir,
+            .runtime = runtime_ptr,
         };
+        return loader;
+    }
+
+    pub fn deinit(self: *PluginLoader) void {
+        self.runtime.deinit();
+        self.allocator.destroy(self.runtime);
+        self.allocator.destroy(self);
     }
 
     /// Fetch a plugin from the registry
@@ -308,7 +341,7 @@ pub const PluginLoader = struct {
         installed_at: u64,
     };
     /// Load all installed plugin modules into the Ghostlang runtime.
-    pub fn loadInstalled(self: *PluginLoader, runtime: *GhostlangRuntime) !void {
+    pub fn loadInstalled(self: *PluginLoader) !void {
         var dir = std.fs.cwd().openDir(self.plugin_dir, .{ .iterate = true }) catch |err| {
             if (err == error.FileNotFound) {
                 zlog.info("Plugin directory not found: {s}", .{self.plugin_dir});
@@ -327,20 +360,11 @@ pub const PluginLoader = struct {
             if (entry.kind != .file) continue;
             if (!std.mem.endsWith(u8, entry.path, ".gza")) continue;
 
-            const module_name = self.relativePathToModuleName(entry.path) catch |err| {
-                zlog.warn("Skipping plugin source {s}: {any}", .{ entry.path, err });
-                continue;
-            };
-            defer self.allocator.free(module_name);
+            const module_path = try std.fs.path.join(self.allocator, &[_][]const u8{ self.plugin_dir, entry.path });
+            defer self.allocator.free(module_path);
 
-            const snippet = std.fmt.allocPrint(self.allocator, "require(\"{s}\")", .{module_name}) catch |err| {
-                zlog.err("Failed to allocate require snippet for {s}: {any}", .{ module_name, err });
-                continue;
-            };
-            defer self.allocator.free(snippet);
-
-            _ = runtime.executeCode(snippet) catch |err| {
-                zlog.err("Failed to execute plugin {s}: {any}", .{ module_name, err });
+            self.runtime.loadModule(module_path) catch |err| {
+                zlog.err("Failed to load plugin module {s}: {any}", .{ module_path, err });
                 continue;
             };
 
@@ -350,13 +374,19 @@ pub const PluginLoader = struct {
         zlog.info("Loaded {d} plugins from {s}", .{ loaded_count, self.plugin_dir });
     }
 
-    /// Load a single plugin module by name (e.g. `plugins.core.file-tree`).
-    pub fn loadPlugin(self: *PluginLoader, runtime: *GhostlangRuntime, module_name: []const u8) !void {
-        const snippet = try std.fmt.allocPrint(self.allocator, "require(\"{s}\")", .{module_name});
-        defer self.allocator.free(snippet);
+    /// Load a single plugin module by path (absolute or relative to plugin directory).
+    pub fn loadPlugin(self: *PluginLoader, module_path: []const u8) !void {
+        if (std.fs.path.isAbsolute(module_path)) {
+            try self.runtime.loadModule(module_path);
+            zlog.info("Plugin loaded: {s}", .{module_path});
+            return;
+        }
 
-        _ = try runtime.executeCode(snippet);
-        zlog.info("Plugin {s} loaded", .{module_name});
+        const full_path = try std.fs.path.join(self.allocator, &[_][]const u8{ self.plugin_dir, module_path });
+        defer self.allocator.free(full_path);
+
+        try self.runtime.loadModule(full_path);
+        zlog.info("Plugin loaded: {s}", .{full_path});
     }
 
     fn relativePathToModuleName(self: *PluginLoader, relative_path: []const u8) ![]u8 {

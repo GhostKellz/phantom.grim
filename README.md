@@ -242,18 +242,22 @@ set_option("tab_width", 2)
 
 Phantom.grim comes with these themes:
 
-- **Gruvbox** (default) - Retro groove colors
-- **Tokyo Night** - Modern dark theme
+- **Ghost Hacker Blue** (default) - Custom Tokyo Night variant with hacker aesthetics
+- **Tokyo Night** - Modern dark theme (Storm, Night, Day, Moon variants)
 - **Catppuccin** - Pastel colors
 - **Dracula** - Classic Dracula theme
 - **Nord** - Arctic-inspired palette
-- **One Dark** - Atom-inspired
+- **Gruvbox** - Retro groove colors
 
 **Switch themes:**
 
 ```ghostlang
 -- In ~/.config/grim/lua/user/config.gza
-phantom.theme = "tokyonight"
+phantom.theme = "ghost-hacker-blue"  -- Default
+-- Or try:
+-- phantom.theme = "tokyonight-storm"
+-- phantom.theme = "catppuccin"
+-- phantom.theme = "gruvbox"
 ```
 
 ---

@@ -1,4 +1,4 @@
-set("editor.theme", "gruvbox")
+set("editor.theme", "ghost-hacker-blue")
 set("editor.line_numbers", true)
 set("editor.relative_line_numbers", true)
 set("editor.tab_width", 2)
