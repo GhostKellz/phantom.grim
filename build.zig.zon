@@ -66,15 +66,15 @@
         },
         .zap = .{
             .url = "https://github.com/ghostkellz/zap/archive/refs/heads/main.tar.gz",
-            .hash = "zap-0.0.0--jHF1gHHAQAJ-1P80ZGWuusd3Q3wLH2EkaxsXTX_JKTJ",
+            .hash = "zap-0.0.0--jHF1uvGAQAjOogcEI3QH_D3lZVD2xapj4hNxaHC2SDO",
         },
         .ghostls = .{
             .url = "https://github.com/ghostkellz/ghostls/archive/refs/heads/main.tar.gz",
-            .hash = "ghostls-0.3.0-fDo9dCrEAgAwhnUr5wL9ba0rKyAeYvSQsrH-7_EjV82N",
+            .hash = "ghostls-0.3.0-fDo9dBTEAgAV-H-0PxAuDCB4aAkxBwJqkHWaZR2gVnVj",
         },
         .grim = .{
             .url = "https://github.com/ghostkellz/grim/archive/refs/heads/main.tar.gz",
-            .hash = "grim-0.0.0-BbxsAdBSFQA4vZPKuAjHGvBhY7NBgLErZA8hMHplyXIx",
+            .hash = "grim-0.0.0-BbxsAa5SFQBLaw55DrKlkWZHpiP6bswQbaYzf1ulCaKK",
         },
     },
     .paths = .{
