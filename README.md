@@ -56,32 +56,74 @@ Built entirely in **Zig** (core performance) and **Ghostlang** (configuration), 
 
 ### 🎨 **UI Components**
 
-- **Dashboard** - Custom greeter with recent files, projects
-- **Which-Key** - Keybinding popup hints
-- **Notifications** - Toast-style non-intrusive messages
-- **Command Palette** - VSCode-like command search
-- **Quickfix List** - Search results, diagnostics, TODOs
+- ✅ **Dashboard** - Custom greeter with recent files, quick actions
+- ✅ **Which-Key** - Keybinding popup hints (critical for discoverability!)
+- ✅ **Bufferline** - Visual buffer tabs at top with icons
+- ✅ **Indent Guides** - Visual indent level indicators
+- ✅ **Statusline** - Git-aware status bar with mode/file/LSP info
+- 🚧 **Notifications** - Toast-style messages (coming soon)
 
-### 📦 **Included Plugins**
+### 📦 **Included Plugins (24 Total - 8457 Lines)**
 
 All plugins written in **Ghostlang** (.gza):
 
+#### Core Plugins (7)
 ```
-phantom.grim/
-├── plugins/
-│   ├── file-tree.gza        # File explorer sidebar
-│   ├── fuzzy-finder.gza     # Telescope-style fuzzy search
-│   ├── git-signs.gza        # Git change indicators
-│   ├── autopairs.gza        # Auto-close brackets/quotes
-│   ├── comment.gza          # Smart commenting (gcc, gbc)
-│   ├── surround.gza         # Surround text objects
-│   ├── which-key.gza        # Keybinding hints
-│   ├── dashboard.gza        # Startup greeter
-│   ├── lsp-config.gza       # LSP auto-configuration
-│   ├── treesitter.gza       # Tree-sitter setup
-│   ├── statusline.gza       # Custom status line
-│   ├── tabline.gza          # Buffer tabs
-│   └── theme.gza            # Theme manager
+plugins/core/
+├── file-tree.gza        (1197 lines) - File explorer with git status
+├── fuzzy-finder.gza     (733 lines)  - FZF with ripgrep integration
+├── statusline.gza       (477 lines)  - Git-aware statusline
+├── treesitter.gza       (214 lines)  - Syntax highlighting via Grove
+├── theme.gza            (492 lines)  - Theme system
+├── plugin-manager.gza   (964 lines)  - Plugin management
+└── zap-ai.gza           (148 lines)  - AI integration (Zap)
+```
+
+#### Editor Plugins (7)
+```
+plugins/editor/
+├── comment.gza          (288 lines)  - Line/block comment toggling
+├── autopairs.gza        (179 lines)  - Auto-close brackets/quotes
+├── textops.gza          (434 lines)  - Buffer manipulation helpers
+├── phantom.gza          (168 lines)  - Core editor functions
+├── terminal.gza         (362 lines)  - Built-in terminal (Ctrl+`)
+├── theme-commands.gza   (63 lines)   - Theme switching commands
+└── plugin-commands.gza  (267 lines)  - Plugin management commands
+```
+
+#### LSP Plugins (2)
+```
+plugins/lsp/
+├── config.gza           (135 lines)  - LSP server configs (ghostls, zls, rust-analyzer)
+└── lsp-config.gza       (135 lines)  - Auto-start LSP servers for Ghostlang/Zig/Rust
+```
+
+#### Git Plugins (1)
+```
+plugins/git/
+└── git-signs.gza        (497 lines)  - Gutter diff signs, blame, hunks
+```
+
+#### UI Plugins (5)
+```
+plugins/ui/
+├── which-key.gza        (364 lines)  - Keybinding discovery popup
+├── dashboard.gza        (233 lines)  - Welcome screen
+├── bufferline.gza       (374 lines)  - Visual buffer tabs
+└── indent-guides.gza    (327 lines)  - Indent visualization
+```
+
+#### Integration Plugins (1)
+```
+plugins/integration/
+└── tmux.gza             (329 lines)  - Seamless tmux integration
+```
+
+#### Extras (3)
+```
+plugins/extras/
+├── health.gza           - Health check system
+└── test/                - Testing infrastructure
 ```
 
 ---
