@@ -79,7 +79,7 @@ local function toggle_line_text(line, comment_token)
 end
 
 local function toggle_line(line_nr)
-    local line = adapter().get_lines(line_nr, line_nr)[1]
+    local line = textops.get_lines(line_nr, line_nr)[1]
     if line == nil then
         return false
     end

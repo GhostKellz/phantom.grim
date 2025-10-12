@@ -27,3 +27,8 @@ phantom.lazy({
     name = "lsp.config",
     event = { "BufReadPost", "BufNewFile" },
 })
+
+phantom.lazy({
+    name = "core.treesitter",
+    event = { "BufReadPost", "BufNewFile" },
+})

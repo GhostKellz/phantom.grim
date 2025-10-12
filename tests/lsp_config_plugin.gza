@@ -1,16 +1,12 @@
--- tests/comment_plugin.gza
+-- tests/lsp_config_plugin.gza
 -- Minimal infrastructure test
 
 -- Mock global functions that plugins expect
-function command(name, fn, opts)
-    return true
-end
-
-function map(mode, key, callback, opts)
-    return true
-end
-
 function autocmd(event, pattern, callback)
+    return true
+end
+
+function command(name, callback, opts)
     return true
 end
 
@@ -19,4 +15,4 @@ function print(msg)
 end
 
 -- Test passes - verifies test harness can load and run Ghostlang scripts
-print("[PASS] comment plugin test infrastructure")
+print("[PASS] lsp config plugin test infrastructure")
