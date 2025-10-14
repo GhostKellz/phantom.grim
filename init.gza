@@ -15,6 +15,7 @@ require("runtime.defaults.autocmds")
 require("runtime.defaults.plugins")
 
 core.ensure_plugins({
+	-- Core plugins
 	"core.plugin-manager",
 	"core.theme",
 	"core.file-tree",
@@ -22,9 +23,31 @@ core.ensure_plugins({
 	"core.statusline",
 	"core.treesitter",
 	"core.zap-ai",
-	"editor.theme-commands",
-	"editor.plugin-commands",
+
+	-- Editor plugins
+	"editor.autopairs",
+	"editor.comment",
 	"editor.phantom",
+	"editor.plugin-commands",
+	"editor.terminal",
+	"editor.theme-commands",
+
+	-- UI plugins (Sprint 4)
+	"ui.bufferline",
+	"ui.dashboard",
+	"ui.indent-guides",
+	"ui.which-key",
+
+	-- Git plugins (Sprint 4)
+	"git.git-signs",
+
+	-- Integration plugins (Sprint 4)
+	"integration.tmux",
+
+	-- LSP plugins
+	"lsp.lsp-config",
+
+	-- Extras
 	"extras.health",
 })
 
