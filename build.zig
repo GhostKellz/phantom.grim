@@ -29,10 +29,8 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
-    const grove_dep = b.dependency("grove", .{
-        .target = target,
-        .optimize = optimize,
-    });
+    // NOTE: grove is already included via grim dependency - no need to import directly
+    // This avoids duplicate tree-sitter symbol errors
     const zlog_dep = b.dependency("zlog", .{
         .target = target,
         .optimize = optimize,
@@ -78,7 +76,7 @@ pub fn build(b: *std.Build) void {
         .imports = &.{
             .{ .name = "zsync", .module = zsync_dep.module("zsync") },
             .{ .name = "ghostlang", .module = ghostlang_dep.module("ghostlang") },
-            .{ .name = "grove", .module = grove_dep.module("grove") },
+            // grove is accessed through grim.syntax module to avoid duplicate symbols
             .{ .name = "zlog", .module = zlog_dep.module("zlog") },
             .{ .name = "grim", .module = grim_dep.module("grim") },
             // TestHarness for plugin testing (exported separately)
@@ -126,7 +124,7 @@ pub fn build(b: *std.Build) void {
                 .{ .name = "phantom_grim", .module = mod },
                 .{ .name = "zsync", .module = zsync_dep.module("zsync") },
                 .{ .name = "ghostlang", .module = ghostlang_dep.module("ghostlang") },
-                .{ .name = "grove", .module = grove_dep.module("grove") },
+                // grove is accessed through grim.syntax module to avoid duplicate symbols
                 .{ .name = "zlog", .module = zlog_dep.module("zlog") },
                 .{ .name = "zhttp", .module = zhttp_dep.module("zhttp") },
                 .{ .name = "flare", .module = flare_dep.module("flare") },

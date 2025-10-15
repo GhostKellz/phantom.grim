@@ -34,11 +34,11 @@
     .dependencies = .{
         .zsync = .{
             .url = "https://github.com/ghostkellz/zsync/archive/main.tar.gz",
-            .hash = "zsync-0.5.5-KAuheTMzIAAtLaZ3cCKVB0D18peui-XVUquyjZjDPNrB",
+            .hash = "zsync-0.6.0-KAuheSdEIADMlFewFMVPdUYTc0wbMHf_j-OTiQdKSHew",
         },
         .phantom = .{
             .url = "https://github.com/ghostkellz/phantom/archive/main.tar.gz",
-            .hash = "phantom-0.5.0-E0eWBBcxEgBL64hlBvhWs5mNWAkruSyJ_kSR5xTBsWM_",
+            .hash = "phantom-0.5.0-E0eWBAExEgDRtfXJ_QguR2k_lPztdeqobSVyAj_hPKPw",
         },
         .gcode = .{
             .url = "https://github.com/ghostkellz/gcode/archive/refs/heads/main.tar.gz",
@@ -48,10 +48,7 @@
             .url = "https://github.com/ghostkellz/ghostlang/archive/main.tar.gz",
             .hash = "ghostlang-0.1.2-_SzSPUeIBQCl0nmEmwYFvM61fyAA2AITvCBRJBXbtTc7",
         },
-        .grove = .{
-            .url = "https://github.com/ghostkellz/grove/archive/main.tar.gz",
-            .hash = "grove-0.1.1-rGFsN-7i5QRbQ9rp3VYzTUg5ReKWu9c3MCCMqTmwVWu6",
-        },
+        // grove removed - accessed through grim dependency to avoid duplicate tree-sitter symbols
         .zlog = .{
             .url = "https://github.com/ghostkellz/zlog/archive/main.tar.gz",
             .hash = "zlog-0.1.0-kS0sWE9cCAC4TsztkA-l0QEYu3eUKXrHnHux5eDvs04J",
@@ -65,16 +62,16 @@
             .hash = "flare-0.1.0-NK4JafGMAQA8xE2ah8YBxO74sOkWrsQYTkWQ64D1PJVg",
         },
         .zap = .{
-            .url = "https://github.com/ghostkellz/zap/archive/refs/heads/main.tar.gz",
-            .hash = "zap-0.0.0--jHF1uvGAQAjOogcEI3QH_D3lZVD2xapj4hNxaHC2SDO",
+            .url = "https://github.com/ghostkellz/zap/archive/main.tar.gz",
+            .hash = "zap-0.0.0--jHF1tXGAQCjnbEAZ0LjO-Wxu0lX04fS0kWjYgdai-4u",
         },
         .ghostls = .{
             .url = "https://github.com/ghostkellz/ghostls/archive/refs/heads/main.tar.gz",
             .hash = "ghostls-0.3.0-fDo9dBTEAgAV-H-0PxAuDCB4aAkxBwJqkHWaZR2gVnVj",
         },
         .grim = .{
-            .url = "https://github.com/ghostkellz/grim/archive/refs/heads/main.tar.gz",
-            .hash = "grim-0.0.0-BbxsAa5SFQBLaw55DrKlkWZHpiP6bswQbaYzf1ulCaKK",
+            .url = "https://github.com/ghostkellz/grim/archive/main.tar.gz",
+            .hash = "grim-0.0.0-BbxsAW5eFgCE01m1yE03E1D1ZvHGzC7HuW8gVNIjUACv",
         },
     },
     .paths = .{
