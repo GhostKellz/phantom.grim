@@ -24,6 +24,9 @@ core.ensure_plugins({
 	"core.treesitter",
 	"core.zap-ai",
 
+	-- AI plugins
+	"ai.omen",
+
 	-- Editor plugins
 	"editor.autopairs",
 	"editor.comment",
