@@ -71,7 +71,7 @@
         },
         .grim = .{
             .url = "https://github.com/ghostkellz/grim/archive/main.tar.gz",
-            .hash = "grim-0.0.0-BbxsAW5eFgCE01m1yE03E1D1ZvHGzC7HuW8gVNIjUACv",
+            .hash = "grim-0.0.0-BbxsASxkFwDyJNFq4lq25p5e8NYyQn-Qn1IHIubOrqKK",
         },
     },
     .paths = .{

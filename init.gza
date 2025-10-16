@@ -54,5 +54,4 @@ core.ensure_plugins({
 	"extras.health",
 })
 
-local loaded = table.concat(core.loaded_plugins(), ", ")
-print("[phantom.grim] ready (core plugins: " .. loaded .. ")")
+print("[phantom.grim] ready")
